@@ -1,0 +1,18 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+
+parameters:
+    level: max
+    paths:
+        - config
+        - src
+        - tests
+    tmpDir: build/phpstan
+    treatPhpDocTypesAsCertain: false
+    # The package's own config/ is where env() belongs.
+    # Pest.php declares the test helpers and constants every test file uses.
+    scanFiles:
+        - tests/Pest.php
+    configDirectories:
+        - %currentWorkingDirectory%/config

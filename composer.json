@@ -1,0 +1,94 @@
+{
+    "name": "livck/cloud-laravel",
+    "description": "Laravel integration for the LIVCK Cloud PHP SDK.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "livck",
+        "laravel",
+        "uptime",
+        "monitoring",
+        "status page",
+        "statuspage",
+        "incidents",
+        "api",
+        "sdk"
+    ],
+    "homepage": "https://livck.cloud",
+    "support": {
+        "docs": "https://docs.livck.cloud",
+        "issues": "https://github.com/LIVCK/cloud-laravel/issues",
+        "source": "https://github.com/LIVCK/cloud-laravel"
+    },
+    "require": {
+        "php": "^8.3",
+        "guzzlehttp/guzzle": "^7.8.2 || ^8.0",
+        "illuminate/console": "^12.0 || ^13.0",
+        "illuminate/container": "^12.0 || ^13.0",
+        "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/http": "^12.0 || ^13.0",
+        "illuminate/log": "^12.0 || ^13.0",
+        "illuminate/support": "^12.0 || ^13.0",
+        "livck/cloud-php": "^1.0",
+        "psr/http-client": "^1.0",
+        "psr/http-message": "^1.1 || ^2.0",
+        "psr/log": "^2.0 || ^3.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.12",
+        "laravel/pint": "^1.32",
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^4.0",
+        "phpstan/phpstan": "^2.2",
+        "phpstan/phpstan-strict-rules": "^2.0.12",
+        "rector/rector": "^2.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "LIVCK\\Cloud\\Laravel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "LIVCK\\Cloud\\Laravel\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "LIVCK\\Cloud\\Laravel\\CloudServiceProvider"
+            ],
+            "aliases": {
+                "LivckCloud": "LIVCK\\Cloud\\Laravel\\Facades\\LivckCloud"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true,
+        "platform": {
+            "php": "8.3.0"
+        },
+        "allow-plugins": {
+            "php-http/discovery": true,
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "test:integration": "pest --testsuite=Integration",
+        "lint": "pint --test",
+        "lint:fix": "pint",
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "refactor": "rector process",
+        "refactor:check": "rector process --dry-run",
+        "ci": [
+            "@lint",
+            "@analyse",
+            "@refactor:check",
+            "@test"
+        ]
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

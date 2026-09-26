@@ -1,0 +1,20 @@
+# Dependencies — a library never commits its lock file
+/vendor/
+composer.lock
+
+# Tool caches and build output
+/.phpunit.cache/
+.phpunit.result.cache
+/build/
+.php-cs-fixer.cache
+.pint.cache
+
+# Editors and operating systems
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+
+# Local configuration
+.env
+.env.*
