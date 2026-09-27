@@ -4,6 +4,31 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-27
+
+Clients for tokens that are not in `config/livck-cloud.php`, such as a reseller's one per end
+customer.
+
+### Added
+
+- `LivckCloud::withToken($token, $connection = null)`: a client with the settings of a
+  connection, the default one when none is named, and another token.
+- `LivckCloud::build($config)`: a client from the keys of a connection. What the array leaves
+  out comes from the default connection, the token included; an unknown key throws a
+  `ConfigurationException` that names it.
+- Both refuse a blank token with `MissingTokenException` rather than fall back to a configured
+  one, and follow the rules of a connection otherwise: User-Agent, `locale: 'app'`, log
+  channel, transport, timeouts and retries. The manager keeps neither client, so an Octane or
+  queue worker holds no customer's token beyond the request or job that used it.
+- `LivckCloud::fake()` answers both and records their requests under the connection
+  `ondemand` (`CloudFake::ON_DEMAND`).
+
+### Security
+
+- An exception thrown while a connection's configuration is read no longer records the token
+  among the arguments of its trace: the parameters that carry it are marked
+  `#[SensitiveParameter]`.
+
 ## [1.0.0] - 2026-09-27
 
 First release, for PHP 8.3 and later with Laravel 12 or 13, on top of `livck/cloud-php` 1.0.
@@ -37,4 +62,5 @@ First release, for PHP 8.3 and later with Laravel 12 or 13, on top of `livck/clo
 - The User-Agent names the package and the Laravel version after the SDK:
   `livck-cloud-php/1.0.0 PHP/8.4.1 livck-cloud-laravel/1.0.0 Laravel/13.2.0`.
 
+[1.1.0]: https://github.com/LIVCK/cloud-laravel/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/LIVCK/cloud-laravel/releases/tag/v1.0.0

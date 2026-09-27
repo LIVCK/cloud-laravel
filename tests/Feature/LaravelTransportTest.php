@@ -87,7 +87,7 @@ it('lets Http::fake() answer the SDK and Http::assertSent() see it', function ()
 
     Http::assertSent(fn(Request $request): bool => $request->url() === 'https://api.livck.cloud/v1/me'
         && $request->method() === 'GET'
-        && $request->header('User-Agent') === [sprintf('livck-cloud-php/%s PHP/%s livck-cloud-laravel/1.0.0 Laravel/%s', CloudClient::VERSION, PHP_VERSION, app()->version())]
+        && $request->header('User-Agent') === [sprintf('livck-cloud-php/%s PHP/%s livck-cloud-laravel/1.1.0 Laravel/%s', CloudClient::VERSION, PHP_VERSION, app()->version())]
         && $request->header('Authorization') === ['Bearer ' . TEST_TOKEN]);
     Http::assertSentCount(1);
 });
@@ -201,7 +201,7 @@ it('sends a client built on demand the way its settings say', function (): void 
         ->and($httpClientOf(LivckCloud::withToken(CUSTOMER_TOKEN, 'customer-b')))->toBe(GuzzleHttp\Client::class);
 
     Http::assertSent(fn(Request $request): bool => $request->url() === 'https://api.livck.cloud/v1/me'
-        && $request->header('User-Agent') === [sprintf('livck-cloud-php/%s PHP/%s livck-cloud-laravel/1.0.0 Laravel/%s', CloudClient::VERSION, PHP_VERSION, app()->version())]
+        && $request->header('User-Agent') === [sprintf('livck-cloud-php/%s PHP/%s livck-cloud-laravel/1.1.0 Laravel/%s', CloudClient::VERSION, PHP_VERSION, app()->version())]
         && $request->header('Authorization') === ['Bearer ' . CUSTOMER_TOKEN]);
     Http::assertSentCount(1);
 });

@@ -19,7 +19,7 @@ it('adds a section with versions, connections, base URIs and token prefixes', fu
     $output = about();
 
     expect($output)->toContain('LIVCK Cloud')
-        ->toContain('Version')->toContain('1.0.0')
+        ->toContain('Version')->toContain('1.1.0')
         ->toContain('SDK version')
         ->toContain('Default connection')
         ->toContain('Connection [default]')->toContain('https://api.livck.cloud/v1, token lvk_Secr3tPr…')
@@ -51,7 +51,7 @@ it('offers the section as JSON', function (): void {
 
     // Laravel snake-cases the section name letter by letter for the JSON keys.
     expect($json['l_i_v_c_k_cloud'] ?? null)->toBe([
-        'version' => '1.0.0',
+        'version' => '1.1.0',
         'sdk_version' => '1.0.0',
         'default_connection' => 'default',
         'connection[default]' => 'https://api.livck.cloud/v1, token lvk_Secr3tPr…',

@@ -230,7 +230,7 @@ controller, a job) rather than into a singleton built while the application boot
 Every request names the SDK, then this package and the Laravel version, then your suffix:
 
 ```text
-livck-cloud-php/1.0.0 PHP/8.4.1 livck-cloud-laravel/1.0.0 Laravel/13.2.0 my-panel/2.3
+livck-cloud-php/1.0.0 PHP/8.4.1 livck-cloud-laravel/1.1.0 Laravel/13.2.0 my-panel/2.3
 ```
 
 ## Links

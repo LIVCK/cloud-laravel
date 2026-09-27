@@ -15,7 +15,7 @@ it('names the SDK first, then the package and the Laravel version', function ():
     LivckCloud::me();
 
     expect($fake->lastRequest()?->header('User-Agent'))
-        ->toBe('livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION)
+        ->toBe('livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.1.0 Laravel/' . Application::VERSION)
         ->toBe(sprintf('livck-cloud-php/%s PHP/%s livck-cloud-laravel/%s Laravel/%s', CloudClient::VERSION, PHP_VERSION, CloudManager::VERSION, Application::VERSION));
 });
 
@@ -26,14 +26,14 @@ it('appends the configured suffix after the package', function (): void {
     LivckCloud::me();
 
     expect($fake->lastRequest()?->header('User-Agent'))
-        ->toBe('livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION . ' hoster-panel/2.3');
+        ->toBe('livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.1.0 Laravel/' . Application::VERSION . ' hoster-panel/2.3');
 });
 
 it('keeps the package in the User-Agent whatever the suffix says', function (mixed $suffix): void {
     useConnection('default', ['token' => TEST_TOKEN, 'user_agent_suffix' => $suffix]);
 
     expect(LivckCloud::connection()->options()->userAgentSuffix)
-        ->toBe('livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION);
+        ->toBe('livck-cloud-laravel/1.1.0 Laravel/' . Application::VERSION);
 })->with(['null' => [null], 'empty' => [''], 'blank' => ['   ']]);
 
 it('identifies clients built on demand the same way', function (): void {
@@ -44,7 +44,7 @@ it('identifies clients built on demand the same way', function (): void {
     LivckCloud::build(['token' => CUSTOMER_TOKEN, 'user_agent_suffix' => 'reseller-sync/1.4'])->me();
     LivckCloud::build(['token' => CUSTOMER_TOKEN, 'user_agent_suffix' => null])->me();
 
-    $base = 'livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION;
+    $base = 'livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.1.0 Laravel/' . Application::VERSION;
 
     expect(array_map(static fn(RecordedRequest $request): ?string => $request->header('User-Agent'), $fake->recorded()))->toBe([
         $base . ' hoster-panel/2.3',
@@ -59,5 +59,5 @@ it('identifies every connection, not only the default one', function (): void {
 
     LivckCloud::connection('customer-b')->me();
 
-    expect($fake->lastRequest()?->header('User-Agent'))->toEndWith(' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION . ' reseller-sync/1.4');
+    expect($fake->lastRequest()?->header('User-Agent'))->toEndWith(' livck-cloud-laravel/1.1.0 Laravel/' . Application::VERSION . ' reseller-sync/1.4');
 });
