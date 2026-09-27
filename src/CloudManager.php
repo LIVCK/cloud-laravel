@@ -18,6 +18,7 @@ use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Data\CheckTypeCatalog;
 use LIVCK\Cloud\Data\Me;
 use LIVCK\Cloud\Data\Probe;
+use LIVCK\Cloud\Http\BearerToken;
 use LIVCK\Cloud\Http\Request;
 use LIVCK\Cloud\Http\Response;
 use LIVCK\Cloud\Laravel\Exceptions\ConfigurationException;
@@ -40,6 +41,7 @@ use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use SensitiveParameter;
 
 /**
  * The connections of config/livck-cloud.php, one SDK client each.
@@ -54,6 +56,10 @@ use Psr\Log\NullLogger;
  * Configuration, cache, log and locale are read from the application of the moment, never
  * from the one the manager was built in; under Octane that is the request's sandbox.
  *
+ * `build()` and `withToken()` make clients for tokens outside the configuration, such as a
+ * reseller's one per end customer. Those are built on every call and never kept: a worker
+ * would otherwise hold a client for every customer's token for as long as it runs.
+ *
  * The methods of CloudClientInterface act on the default connection. Methods a newer SDK
  * adds are forwarded to it as well.
  */
@@ -64,6 +70,11 @@ class CloudManager
     public const string VERSION = '1.0.0';
 
     public const string USER_AGENT_PRODUCT = 'livck-cloud-laravel';
+
+    /** The calls that build a client on demand, as error messages name them. */
+    private const string BUILD = 'LivckCloud::build()';
+
+    private const string WITH_TOKEN = 'LivckCloud::withToken()';
 
     /** @var array<string, array{client: CloudClientInterface, followsApplicationLocale: bool}> */
     private array $connections = [];
@@ -89,6 +100,47 @@ class CloudManager
         return $connection['followsApplicationLocale']
             ? $connection['client']->withLocale($this->app()->getLocale())
             : $connection['client'];
+    }
+
+    /**
+     * A client from an array with the keys of a connection in config/livck-cloud.php, for a
+     * token that is not configured there. A key the array leaves out comes from the default
+     * connection, the token included; a key it passes wins, even with null.
+     *
+     *     $cloud = LivckCloud::build(['token' => $customer->livck_token, 'locale' => 'de']);
+     *
+     * Built on every call and never kept, so hold the client in a variable for the request
+     * or job at hand. Under {@see fake()} it answers from the fake, its requests recorded
+     * under {@see CloudFake::ON_DEMAND}.
+     *
+     * @param array<string, mixed> $config
+     *
+     * @throws ConfigurationException for an unknown key or a value a connection would refuse
+     * @throws MissingTokenException for a blank token, or for none when the default connection has none either
+     */
+    public function build(#[SensitiveParameter] array $config): CloudClientInterface
+    {
+        $unknown = array_values(array_diff(array_keys($config), ConnectionConfig::KEYS));
+
+        if ($unknown !== []) {
+            throw ConfigurationException::unknownKeys($unknown, ConnectionConfig::KEYS);
+        }
+
+        return $this->onDemand(self::BUILD, $this->getDefaultConnection(), $config);
+    }
+
+    /**
+     * A client with the settings of a connection, the default one when no name is given, and
+     * another token. Built on every call and never kept, as with {@see build()}.
+     *
+     *     LivckCloud::withToken($customer->livck_token)->services()->list();
+     *
+     * @throws ConfigurationException for an unknown connection or a token the API could never accept
+     * @throws MissingTokenException for a blank token
+     */
+    public function withToken(#[SensitiveParameter] string $token, ?string $connection = null): CloudClientInterface
+    {
+        return $this->onDemand(self::WITH_TOKEN, $connection ?? $this->getDefaultConnection(), ['token' => $token]);
     }
 
     public function getDefaultConnection(): string
@@ -274,18 +326,58 @@ class CloudManager
     {
         $config = ConnectionConfig::fromArray($name, $this->settings($name));
         $options = $config->options($this->userAgentSuffix($config->userAgentSuffix), $this->logger());
-
-        if ($this->fake instanceof CloudFake) {
-            $client = $this->fake->client($name, $options);
-        } else {
-            $client = new CloudClient(
-                $config->token ?? throw MissingTokenException::forConnection($name),
-                $options,
-                $config->transport === Transport::Laravel ? $this->laravelHttpClient($options) : null,
-            );
-        }
+        $client = $this->client($name, $config, $options, static fn(): MissingTokenException => MissingTokenException::forConnection($name));
 
         return ['client' => $client, 'followsApplicationLocale' => $config->followsApplicationLocale()];
+    }
+
+    /**
+     * A client from the settings of a connection with those of a call on top, for build() and
+     * withToken(). It follows the rules of a connection, and nothing of it is kept.
+     *
+     * A token the call passes is checked with or without a fake and never replaced by a
+     * configured one: a blank token stands for a customer without one, which a test should
+     * see as production does. A token build() inherits is needed outside a fake only, as for
+     * a connection.
+     *
+     * @param array<array-key, mixed> $given
+     */
+    private function onDemand(string $call, string $connection, #[SensitiveParameter] array $given): CloudClientInterface
+    {
+        $config = ConnectionConfig::onDemand($call, $connection, $this->settings($connection), $given);
+
+        if (! $config->token instanceof BearerToken && array_key_exists('token', $given)) {
+            throw MissingTokenException::blank($call);
+        }
+
+        $options = $config->options($this->userAgentSuffix($config->userAgentSuffix), $this->logger());
+
+        // Built for this call only, so the locale of the moment goes straight into the options.
+        if ($config->followsApplicationLocale()) {
+            $options = $options->withLocale($this->app()->getLocale());
+        }
+
+        return $this->client(CloudFake::ON_DEMAND, $config, $options, static fn(): MissingTokenException => MissingTokenException::notInherited($connection));
+    }
+
+    /**
+     * The fake's client while a fake is active, which needs no token; a real one over the
+     * configured transport otherwise.
+     *
+     * @param string $label the connection the fake records the requests under
+     * @param Closure(): MissingTokenException $missingToken the exception for a configuration without a token
+     */
+    private function client(string $label, ConnectionConfig $config, ClientOptions $options, Closure $missingToken): CloudClientInterface
+    {
+        if ($this->fake instanceof CloudFake) {
+            return $this->fake->client($label, $options);
+        }
+
+        return new CloudClient(
+            $config->token ?? throw $missingToken(),
+            $options,
+            $config->transport === Transport::Laravel ? $this->laravelHttpClient($options) : null,
+        );
     }
 
     /**

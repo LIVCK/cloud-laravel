@@ -15,10 +15,12 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use LIVCK\Cloud\ClientOptions;
 use LIVCK\Cloud\CloudClient;
+use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Data\Me;
 use LIVCK\Cloud\Exceptions\TransportException;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
 use LIVCK\Cloud\Laravel\Http\LaravelHttpClient;
+use LIVCK\Cloud\Laravel\Testing\CloudFake;
 use LIVCK\Cloud\Testing\MockResponse;
 use Psr\Http\Message\RequestInterface;
 
@@ -182,5 +184,35 @@ it('leaves the stage to LivckCloud::fake()', function (): void {
     LivckCloud::me();
 
     $fake->assertSentCount(1);
+    Http::assertNothingSent();
+});
+
+it('sends a client built on demand the way its settings say', function (): void {
+    useConnection('customer-b', ['transport' => 'sdk']);
+    Http::fake(['*' => Http::response(mePayload())]);
+    $httpClientOf = static fn(CloudClientInterface $client): ?string => $client instanceof CloudClient ? $client->__debugInfo()['httpClient'] : null;
+
+    $client = LivckCloud::withToken(CUSTOMER_TOKEN);
+    $client->me();
+
+    expect($httpClientOf($client))->toBe(LaravelHttpClient::class)
+        ->and($httpClientOf(LivckCloud::build(['token' => CUSTOMER_TOKEN])))->toBe(LaravelHttpClient::class)
+        ->and($httpClientOf(LivckCloud::build(['transport' => 'sdk'])))->toBe(GuzzleHttp\Client::class)
+        ->and($httpClientOf(LivckCloud::withToken(CUSTOMER_TOKEN, 'customer-b')))->toBe(GuzzleHttp\Client::class);
+
+    Http::assertSent(fn(Request $request): bool => $request->url() === 'https://api.livck.cloud/v1/me'
+        && $request->header('User-Agent') === [sprintf('livck-cloud-php/%s PHP/%s livck-cloud-laravel/1.0.0 Laravel/%s', CloudClient::VERSION, PHP_VERSION, app()->version())]
+        && $request->header('Authorization') === ['Bearer ' . CUSTOMER_TOKEN]);
+    Http::assertSentCount(1);
+});
+
+it('leaves clients built on demand to LivckCloud::fake() as well', function (): void {
+    Http::preventStrayRequests();
+    $fake = LivckCloud::fake([MockResponse::json(mePayload()), MockResponse::json(mePayload())]);
+
+    LivckCloud::withToken(CUSTOMER_TOKEN)->me();
+    LivckCloud::build(['transport' => 'laravel'])->me();
+
+    expect($fake->recorded(CloudFake::ON_DEMAND))->toHaveCount(2);
     Http::assertNothingSent();
 });

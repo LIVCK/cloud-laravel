@@ -6,6 +6,7 @@ use Illuminate\Container\Container;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Facade;
+use Illuminate\Support\Facades\Http;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Laravel\CloudManager;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
@@ -100,6 +101,43 @@ it('shares one client across requests when the locale is fixed', function (): vo
     expect($clients[0])->toBe($clients[1])
         ->and($clients[0])->toBe($manager->connection())
         ->and($clients[0]->options()->locale)->toBe('de');
+});
+
+it('never lets the token of one request reach another', function (): void {
+    useConnection('default', ['token' => TEST_TOKEN, 'transport' => 'laravel']);
+    Http::fake(['*' => Http::response(mePayload())]);
+    $worker = app();
+    $worker->make(CloudManager::class); // resolved while the worker boots, then shared
+
+    $first = inOctaneRequest($worker, function (): CloudClientInterface {
+        $client = LivckCloud::withToken('lvk_CustomerOfTheFirstRequest000000');
+        $client->me();
+
+        return $client;
+    });
+
+    $second = inOctaneRequest($worker, function (): CloudClientInterface {
+        $client = LivckCloud::build(['token' => 'lvk_CustomerOfTheSecondRequest00000']);
+        $client->me();
+        LivckCloud::me();
+
+        return $client;
+    });
+
+    expect($first)->not->toBe($second)
+        ->and(sentAuthorizations())->toBe([
+            ['Bearer lvk_CustomerOfTheFirstRequest000000'],
+            ['Bearer lvk_CustomerOfTheSecondRequest00000'],
+            ['Bearer ' . TEST_TOKEN],
+        ]);
+
+    // Once the requests are over, the worker holds neither client.
+    $references = [WeakReference::create($first), WeakReference::create($second)];
+    unset($first, $second);
+    gc_collect_cycles();
+
+    expect($references[0]->get())->toBeNull()
+        ->and($references[1]->get())->toBeNull();
 });
 
 it('reads the configuration of the request it serves', function (): void {

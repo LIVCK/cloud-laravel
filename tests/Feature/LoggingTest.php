@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
 use LIVCK\Cloud\Testing\MockResponse;
 use Monolog\Handler\NullHandler;
@@ -46,6 +47,20 @@ it('writes one debug line per attempt to the configured channel', function (): v
 
     expect($written)->not->toContain('lvk_')
         ->and($written)->not->toContain('Example Hosting');
+});
+
+it('logs the requests of a client built on demand to the same channel, never its token', function (): void {
+    config()->set('logging.channels.livck-cloud', ['driver' => 'monolog', 'handler' => NullHandler::class, 'level' => 'debug']);
+    config()->set('livck-cloud.log_channel', 'livck-cloud');
+    useConnection('default', ['transport' => 'laravel']);
+    Http::fake(['*' => Http::response(mePayload())]);
+
+    $messages = logged(fn(): mixed => LivckCloud::withToken(CUSTOMER_TOKEN)->me());
+
+    expect($messages)->toHaveCount(1)
+        ->and($messages[0]->context)->toMatchArray(['method' => 'GET', 'uri' => 'https://api.livck.cloud/v1/me', 'status' => 200, 'attempt' => 1])
+        ->and(json_encode([$messages[0]->message, $messages[0]->context], JSON_THROW_ON_ERROR))->not->toContain('lvk_')
+        ->and(sentAuthorizations())->toBe([['Bearer ' . CUSTOMER_TOKEN]]);
 });
 
 it('logs nothing without a channel', function (): void {

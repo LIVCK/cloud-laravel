@@ -136,6 +136,18 @@ describe('errors', function (): void {
         expect(LivckCloud::connection())->toBeInstanceOf(CloudClient::class);
     });
 
+    it('keeps the token out of the trace of a configuration error', function (): void {
+        useConnection('default', ['token' => TEST_TOKEN, 'timeout' => 'soon']);
+
+        $e = thrownWithArguments(fn(): CloudClientInterface => LivckCloud::connection());
+        $arguments = recordedArguments($e);
+
+        expect($e)->toBeInstanceOf(ConfigurationException::class)
+            ->and($arguments)->toContain(SensitiveParameterValue::class)
+            ->and($arguments)->not->toContain('Secr3t')
+            ->and((string) $e)->not->toContain('Secr3t');
+    });
+
     it('refuses a log channel that is not a name', function (): void {
         useConnection('default', ['token' => TEST_TOKEN]);
         config()->set('livck-cloud.log_channel', ['stack']);

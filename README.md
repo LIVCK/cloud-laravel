@@ -100,6 +100,43 @@ LivckCloud::connection('customer-b')->services()->list();
 
 A key a connection leaves out takes the SDK's default.
 
+## Tokens from your database
+
+A reseller who keeps one token per end customer in their own database needs no connection for
+each. `withToken()` takes the settings of the default connection, or of the connection named
+second, with another token:
+
+```php
+LivckCloud::withToken($customer->livck_token)->services()->list();
+```
+
+`build()` takes the keys of a connection. What it leaves out comes from the default connection,
+the token included; a key it passes wins, even with `null`. An unknown key throws, so a typo
+cannot go unnoticed:
+
+```php
+$cloud = LivckCloud::build([
+    'token' => $customer->livck_token,
+    'locale' => $customer->locale,
+]);
+```
+
+A blank token throws `MissingTokenException` instead of falling back to a configured one, so a
+customer without a token never reaches your own organization. Store the tokens with Laravel's
+`encrypted` cast, which keeps them out of the database in plain text:
+
+```php
+protected function casts(): array
+{
+    return ['livck_token' => 'encrypted'];
+}
+```
+
+Each call builds a new client and the manager keeps none; an Octane or queue worker would
+otherwise hold a client for every customer's token for as long as it runs. Hold the client in
+a variable for the request or job at hand rather than calling `withToken()` again for each API
+call. `LivckCloud::fake()` covers both, see [Testing](#testing).
+
 ## Configuration
 
 | Key | Default | Notes |
@@ -139,9 +176,10 @@ base URI and the beginning of each token, never the token itself.
 
 ## Testing
 
-`LivckCloud::fake()` swaps every connection for the SDK's fake: the facade, injected clients
-and named connections all answer from one queue, nothing leaves the process, and retries do
-not sleep. No token is needed.
+`LivckCloud::fake()` swaps every connection for the SDK's fake: the facade, injected clients,
+named connections and clients from `withToken()` and `build()` all answer from one queue,
+nothing leaves the process, and retries do not sleep. No configured token is needed; a blank
+one passed to `withToken()` or `build()` still throws.
 
 ```php
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
@@ -160,7 +198,8 @@ it('tags a new customer in their own organization', function () {
 });
 ```
 
-The matcher receives the request and the name of its connection. `assertNotSent()`,
+The matcher receives the request and the name of its connection: `ondemand`
+(`CloudFake::ON_DEMAND`) for a client from `withToken()` or `build()`. `assertNotSent()`,
 `assertSentCount()` and `assertNothingSent()` complete the set; these four work on the facade
 as well (`LivckCloud::assertSent(…)`). `assertNoPendingResponses()` checks that every queued
 response was used, and `recorded('customer-b')` lists one connection's requests. A request
@@ -183,7 +222,8 @@ once and every request of an Octane worker and every job of a queue worker reuse
 configuration and locale from the application of the moment, so with `locale: 'app'` each
 request gets its own language. Resolve such a client where you use it (the facade, a
 controller, a job) rather than into a singleton built while the application boots, and call
-`LivckCloud::purge()` after changing a connection at runtime.
+`LivckCloud::purge()` after changing a connection at runtime. Clients from `withToken()` and
+`build()` are never kept, see [Tokens from your database](#tokens-from-your-database).
 
 ## User-Agent
 

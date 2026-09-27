@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use GuzzleHttp\Psr7\Response as PsrResponse;
 use LIVCK\Cloud\ClientOptions;
+use LIVCK\Cloud\CloudClient;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Data\Probe;
 use LIVCK\Cloud\Http\Request;
@@ -117,6 +118,15 @@ it('reports a method nobody has under its own name', function (): void {
 
     expect(fn(): mixed => app(CloudManager::class)->__call('doesNotExist', []))
         ->toThrow(BadMethodCallException::class, 'Call to undefined method LIVCK\Cloud\Laravel\CloudManager::doesNotExist()');
+});
+
+it('lets withToken() and build() be mocked like the forwarded methods', function (): void {
+    [$client] = CloudClient::fake();
+    LivckCloud::shouldReceive('withToken')->once()->with(CUSTOMER_TOKEN, 'customer-b')->andReturn($client);
+    LivckCloud::shouldReceive('build')->once()->with(['token' => CUSTOMER_TOKEN])->andReturn($client);
+
+    expect(LivckCloud::withToken(CUSTOMER_TOKEN, 'customer-b'))->toBe($client)
+        ->and(LivckCloud::build(['token' => CUSTOMER_TOKEN]))->toBe($client);
 });
 
 it('hands out the client interface for injection', function (): void {

@@ -18,6 +18,8 @@ use WeakMap;
  * What `LivckCloud::fake()` returns. Every connection, whether reached through the facade,
  * an injected CloudClientInterface or `LivckCloud::connection('name')`, answers from one
  * queue of MockResponses, and every request is recorded with the connection that sent it.
+ * Clients from `LivckCloud::build()` and `LivckCloud::withToken()` answer from the same
+ * queue; their requests are recorded under {@see ON_DEMAND}.
  *
  *     $fake = LivckCloud::fake([MockResponse::json(['data' => $tag], 201)]);
  *
@@ -28,7 +30,8 @@ use WeakMap;
  * It rests on the SDK's FakeHttpClient: nothing leaves the process, retries do not sleep,
  * and a request without a queued response throws, so a test never sends more than it
  * planned for. Each connection keeps its configured options (base URI, locale, retries);
- * no token is needed, every fake sends {@see TOKEN}.
+ * no configured token is needed, every fake sends {@see TOKEN}. A token passed to
+ * `build()` or `withToken()` is still checked, so a blank one throws as in production.
  *
  * A failed assertion throws the SDK's ExpectationFailedException, which every test runner
  * reports as a failure. A passed one counts as an assertion with PHPUnit (and Pest), as
@@ -38,6 +41,13 @@ final readonly class CloudFake
 {
     /** The token every faked connection sends, whatever is configured. */
     public const string TOKEN = 'lvk_test_token';
+
+    /**
+     * The connection recorded for the requests of clients from `LivckCloud::build()` and
+     * `LivckCloud::withToken()`, whichever connection their settings come from. Laravel
+     * names its own on-demand disks, caches and log channels the same way.
+     */
+    public const string ON_DEMAND = 'ondemand';
 
     /** @var WeakMap<RecordedRequest, string> */
     private WeakMap $senders;

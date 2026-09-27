@@ -96,6 +96,52 @@ it('reports what the SDK refuses with the connection it belongs to', function (a
     'non-ascii locale' => [['locale' => 'dé'], 'locale must be a non-empty printable ASCII string.'],
 ]);
 
+it('knows the keys of the shipped connection', function (): void {
+    /** @var array{connections: array{default: array<string, mixed>}} $config */
+    $config = require __DIR__ . '/../../config/livck-cloud.php';
+
+    expect(ConnectionConfig::KEYS)->toBe(array_keys($config['connections']['default']));
+});
+
+describe('on demand', function (): void {
+    it('puts what a call passes over the settings of its connection, null included', function (): void {
+        $config = ConnectionConfig::onDemand(
+            'LivckCloud::build()',
+            'default',
+            ['token' => 'lvk_configured', 'locale' => 'de', 'timeout' => 12, 'transport' => 'laravel'],
+            ['token' => 'lvk_passed', 'locale' => null, 'max_retries' => '4'],
+        );
+        $options = $config->options('suffix/1.0', new NullLogger());
+
+        expect($config->name)->toBe('default')
+            ->and($config->token?->authorizationHeader())->toBe('Bearer lvk_passed')
+            ->and($config->transport)->toBe(Transport::Laravel)
+            ->and($config->locale)->toBeNull()
+            ->and($options->timeout)->toBe(12.0)
+            ->and($options->maxRetries)->toBe(4);
+    });
+
+    it('names a wrong value after where it came from', function (array $inherited, array $given, string $message): void {
+        expect(fn(): ConnectionConfig => ConnectionConfig::onDemand('LivckCloud::build()', 'default', $inherited, $given))
+            ->toThrow(ConfigurationException::class, $message);
+    })->with([
+        'passed' => [[], ['timeout' => 'soon'], 'timeout passed to LivckCloud::build() must be a number, got "soon".'],
+        'inherited' => [['timeout' => 'soon'], ['token' => 'lvk_passed'], 'livck-cloud.connections.default.timeout must be a number, got "soon".'],
+        'token' => [[], ['token' => 'lvk_with space'], 'token passed to LivckCloud::build() is not usable: The API token must consist of printable ASCII characters without whitespace.'],
+        'transport' => [['transport' => 'sdk'], ['transport' => 'curl'], 'transport passed to LivckCloud::build() must be "sdk" or "laravel", got "curl".'],
+    ]);
+
+    it('puts what the SDK refuses down to the call, or to the connection when the call passed nothing but a token', function (array $inherited, array $given, string $message): void {
+        $config = ConnectionConfig::onDemand('LivckCloud::build()', 'customer-b', $inherited, $given);
+
+        expect(fn(): ClientOptions => $config->options('suffix/1.0', new NullLogger()))
+            ->toThrow(ConfigurationException::class, $message);
+    })->with([
+        'the call' => [[], ['base_uri' => 'http://api.example.com/v1'], 'The LIVCK Cloud client from LivckCloud::build() is misconfigured: The base URI must use https.'],
+        'the connection' => [['base_uri' => 'http://api.example.com/v1'], ['token' => 'lvk_passed'], 'The LIVCK Cloud connection [customer-b] is misconfigured: The base URI must use https.'],
+    ]);
+});
+
 it('marks every configuration error as a LIVCK Cloud exception and an invalid argument', function (): void {
     expect(new ConfigurationException('x'))->toBeInstanceOf(LivckCloudException::class)
         ->and(new ConfigurationException('x'))->toBeInstanceOf(InvalidArgumentException::class)

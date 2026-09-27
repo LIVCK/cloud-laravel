@@ -24,9 +24,15 @@ use LIVCK\Cloud\Testing\MockResponse;
 use LIVCK\Cloud\Testing\RecordedRequest;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
+use SensitiveParameter;
 
 /**
- * The default LIVCK Cloud connection; `connection('name')` reaches the others.
+ * The default LIVCK Cloud connection; `connection('name')` reaches the others, `withToken()`
+ * and `build()` make clients for tokens outside the configuration.
+ *
+ * Those two are declared below rather than forwarded by __callStatic(): the trace of an
+ * exception records the arguments of every call on the way, and only a declared parameter
+ * can be marked #[SensitiveParameter] to keep the token out of it.
  *
  * @method static CloudClientInterface connection(?string $name = null)
  * @method static string getDefaultConnection()
@@ -57,21 +63,47 @@ final class LivckCloud extends Facade
 {
     /**
      * Swap every connection for a fake that answers from one queue of MockResponses and
-     * records every request; see {@see CloudFake}. Covers the facade, injected clients and
-     * named connections alike.
+     * records every request; see {@see CloudFake}. Covers the facade, injected clients, named
+     * connections and clients from build() and withToken() alike.
      *
      * @param iterable<MockResponse|Closure(RequestInterface): MockResponse> $responses answered in order
      */
     public static function fake(iterable $responses = []): CloudFake
     {
-        /** @var CloudManager $manager */
-        $manager = self::getFacadeRoot();
+        return self::manager()->fake($responses);
+    }
 
-        return $manager->fake($responses);
+    /**
+     * A client from an array with the keys of a connection, for a token that is not
+     * configured; what the array leaves out comes from the default connection. Built on every
+     * call and never kept. See {@see CloudManager::build()}.
+     *
+     * @param array<string, mixed> $config
+     */
+    public static function build(#[SensitiveParameter] array $config): CloudClientInterface
+    {
+        return self::manager()->build($config);
+    }
+
+    /**
+     * A client with the settings of a connection, the default one when no name is given, and
+     * another token. Built on every call and never kept. See {@see CloudManager::withToken()}.
+     */
+    public static function withToken(#[SensitiveParameter] string $token, ?string $connection = null): CloudClientInterface
+    {
+        return self::manager()->withToken($token, $connection);
     }
 
     protected static function getFacadeAccessor(): string
     {
         return 'livck-cloud';
+    }
+
+    private static function manager(): CloudManager
+    {
+        /** @var CloudManager $manager */
+        $manager = self::getFacadeRoot();
+
+        return $manager;
     }
 }

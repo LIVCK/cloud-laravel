@@ -4,18 +4,21 @@ declare(strict_types=1);
 
 namespace LIVCK\Cloud\Laravel\Support;
 
+use Closure;
 use LIVCK\Cloud\ClientOptions;
 use LIVCK\Cloud\Exceptions\InvalidArgumentException as SdkInvalidArgumentException;
 use LIVCK\Cloud\Http\BearerToken;
 use LIVCK\Cloud\Laravel\Exceptions\ConfigurationException;
 use Psr\Log\LoggerInterface;
+use SensitiveParameter;
 
 /**
  * One entry of `livck-cloud.connections`, read and checked. A key that is missing or empty
  * takes the SDK's default.
  *
  * The token is held as the SDK's {@see BearerToken}, which keeps it out of dumps, logs and
- * serialised state.
+ * serialised state. Parameters that carry it are marked sensitive, so that the trace of an
+ * exception thrown while reading does not record it either.
  *
  * @internal
  */
@@ -24,6 +27,23 @@ final readonly class ConnectionConfig
     /** The `locale` value that follows the application's locale. */
     public const string APP_LOCALE = 'app';
 
+    /** The keys of an entry under `livck-cloud.connections`. */
+    public const array KEYS = [
+        'token',
+        'base_uri',
+        'timeout',
+        'connect_timeout',
+        'max_retries',
+        'max_retry_after',
+        'idempotency',
+        'locale',
+        'user_agent_suffix',
+        'transport',
+    ];
+
+    /**
+     * @param string $subject what an error message calls the connection or client
+     */
     private function __construct(
         public string $name,
         public ?BearerToken $token,
@@ -36,6 +56,7 @@ final readonly class ConnectionConfig
         public ?string $locale,
         public ?string $userAgentSuffix,
         public Transport $transport,
+        private string $subject,
     ) {}
 
     /**
@@ -43,23 +64,43 @@ final readonly class ConnectionConfig
      *
      * @throws ConfigurationException for a value of the wrong type
      */
-    public static function fromArray(string $name, array $settings): self
+    public static function fromArray(string $name, #[SensitiveParameter] array $settings): self
     {
-        $key = static fn(string $option): string => sprintf('livck-cloud.connections.%s.%s', $name, $option);
-        $defaults = new ClientOptions();
-
-        return new self(
+        return self::read(
             $name,
-            self::token($settings['token'] ?? null, $key('token')),
-            ConfigValue::string($settings['base_uri'] ?? null, $key('base_uri')) ?? $defaults->baseUri,
-            ConfigValue::float($settings['timeout'] ?? null, $key('timeout'), $defaults->timeout),
-            ConfigValue::float($settings['connect_timeout'] ?? null, $key('connect_timeout'), $defaults->connectTimeout),
-            ConfigValue::int($settings['max_retries'] ?? null, $key('max_retries'), $defaults->maxRetries),
-            ConfigValue::int($settings['max_retry_after'] ?? null, $key('max_retry_after'), $defaults->maxRetryAfter),
-            ConfigValue::bool($settings['idempotency'] ?? null, $key('idempotency'), $defaults->idempotency),
-            ConfigValue::string($settings['locale'] ?? null, $key('locale')),
-            ConfigValue::string($settings['user_agent_suffix'] ?? null, $key('user_agent_suffix')),
-            self::transport($settings['transport'] ?? null, $key('transport')),
+            $settings,
+            static fn(string $option): string => sprintf('livck-cloud.connections.%s.%s', $name, $option),
+            sprintf('The LIVCK Cloud connection [%s]', $name),
+        );
+    }
+
+    /**
+     * The settings of a client built on demand: what a call passes, over the settings of the
+     * connection it starts from. A key the call passes wins, even with null.
+     *
+     * Error messages name a value after where it came from: the call or the configuration.
+     * What the SDK refuses is put down to the connection when the call passed nothing but a
+     * token, and to the call otherwise.
+     *
+     * @param string $call the call, as error messages name it: `LivckCloud::build()`
+     * @param array<array-key, mixed> $inherited the settings of the connection
+     * @param array<array-key, mixed> $given the settings of the call
+     *
+     * @throws ConfigurationException for a value of the wrong type
+     */
+    public static function onDemand(string $call, string $connection, #[SensitiveParameter] array $inherited, #[SensitiveParameter] array $given): self
+    {
+        $passed = array_keys($given);
+
+        return self::read(
+            $connection,
+            [...$inherited, ...$given],
+            static fn(string $option): string => in_array($option, $passed, true)
+                ? sprintf('%s passed to %s', $option, $call)
+                : sprintf('livck-cloud.connections.%s.%s', $connection, $option),
+            array_diff($passed, ['token']) === []
+                ? sprintf('The LIVCK Cloud connection [%s]', $connection)
+                : sprintf('The LIVCK Cloud client from %s', $call),
         );
     }
 
@@ -92,11 +133,37 @@ final readonly class ConnectionConfig
                 logger: $logger,
             );
         } catch (SdkInvalidArgumentException $e) {
-            throw new ConfigurationException(sprintf('The LIVCK Cloud connection [%s] is misconfigured: %s', $this->name, $e->getMessage()), 0, $e);
+            throw new ConfigurationException(sprintf('%s is misconfigured: %s', $this->subject, $e->getMessage()), 0, $e);
         }
     }
 
-    private static function token(mixed $value, string $key): ?BearerToken
+    /**
+     * @param array<array-key, mixed> $settings
+     * @param Closure(string): string $key what an error message calls an option
+     *
+     * @throws ConfigurationException for a value of the wrong type
+     */
+    private static function read(string $name, #[SensitiveParameter] array $settings, Closure $key, string $subject): self
+    {
+        $defaults = new ClientOptions();
+
+        return new self(
+            $name,
+            self::token($settings['token'] ?? null, $key('token')),
+            ConfigValue::string($settings['base_uri'] ?? null, $key('base_uri')) ?? $defaults->baseUri,
+            ConfigValue::float($settings['timeout'] ?? null, $key('timeout'), $defaults->timeout),
+            ConfigValue::float($settings['connect_timeout'] ?? null, $key('connect_timeout'), $defaults->connectTimeout),
+            ConfigValue::int($settings['max_retries'] ?? null, $key('max_retries'), $defaults->maxRetries),
+            ConfigValue::int($settings['max_retry_after'] ?? null, $key('max_retry_after'), $defaults->maxRetryAfter),
+            ConfigValue::bool($settings['idempotency'] ?? null, $key('idempotency'), $defaults->idempotency),
+            ConfigValue::string($settings['locale'] ?? null, $key('locale')),
+            ConfigValue::string($settings['user_agent_suffix'] ?? null, $key('user_agent_suffix')),
+            self::transport($settings['transport'] ?? null, $key('transport')),
+            $subject,
+        );
+    }
+
+    private static function token(#[SensitiveParameter] mixed $value, string $key): ?BearerToken
     {
         $token = ConfigValue::string($value, $key);
 

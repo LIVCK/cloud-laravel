@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Route;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Data\Me;
 use LIVCK\Cloud\Laravel\CloudManager;
+use LIVCK\Cloud\Laravel\Exceptions\MissingTokenException;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
 use LIVCK\Cloud\Laravel\Testing\CloudFake;
 use LIVCK\Cloud\Laravel\Tests\Fixtures\CustomerStatusController;
@@ -99,6 +100,45 @@ describe('reach', function (): void {
     });
 });
 
+describe('clients built on demand', function (): void {
+    it('answers them from the same queue and records them under ondemand', function (): void {
+        useConnection('customer-b', ['base_uri' => 'https://b.example.test/v1']);
+        $fake = LivckCloud::fake(array_fill(0, 4, MockResponse::json(mePayload())));
+
+        LivckCloud::me();
+        LivckCloud::withToken(CUSTOMER_TOKEN)->me();
+        LivckCloud::withToken(CUSTOMER_TOKEN, 'customer-b')->me();
+        LivckCloud::build(['token' => CUSTOMER_TOKEN, 'locale' => 'de'])->me();
+
+        $onDemand = $fake->recorded(CloudFake::ON_DEMAND);
+
+        expect(CloudFake::ON_DEMAND)->toBe('ondemand')
+            ->and($fake->recorded())->toHaveCount(4)
+            ->and($fake->recorded('default'))->toHaveCount(1)
+            ->and($fake->recorded('customer-b'))->toBe([])
+            ->and(array_map(static fn(RecordedRequest $request): string => $request->uri, $onDemand))
+            ->toBe(['https://api.livck.cloud/v1/me', 'https://b.example.test/v1/me', 'https://api.livck.cloud/v1/me'])
+            ->and($onDemand[2]->header('Accept-Language'))->toBe('de')
+            ->and(array_unique(array_map(static fn(RecordedRequest $request): ?string => $request->header('Authorization'), $fake->recorded())))
+            ->toBe(['Bearer ' . CloudFake::TOKEN]);
+
+        $fake->assertSent(fn(RecordedRequest $request, string $connection): bool => $connection === CloudFake::ON_DEMAND && $request->uri === 'https://b.example.test/v1/me')
+            ->assertSentCount(4);
+        LivckCloud::assertSent(fn(RecordedRequest $request, string $connection): bool => $connection === 'ondemand');
+        LivckCloud::assertNotSent(fn(RecordedRequest $request, string $connection): bool => $connection === 'customer-b');
+    });
+
+    it('needs no configured token for them, but refuses a blank one as production does', function (): void {
+        $fake = LivckCloud::fake([MockResponse::json(mePayload())]);
+
+        LivckCloud::build(['locale' => 'en'])->me();
+
+        expect(fn(): CloudClientInterface => LivckCloud::withToken(''))->toThrow(MissingTokenException::class)
+            ->and(fn(): CloudClientInterface => LivckCloud::build(['token' => null]))->toThrow(MissingTokenException::class);
+        $fake->assertSentCount(1);
+    });
+});
+
 describe('strictness', function (): void {
     it('fails loudly on a request nobody queued a response for', function (): void {
         useConnection('customer-b');
@@ -110,7 +150,7 @@ describe('strictness', function (): void {
     });
 
     it('sends nothing without a fake when a token is missing, and says why', function (): void {
-        expect(fn(): Me => LivckCloud::me())->toThrow(LIVCK\Cloud\Laravel\Exceptions\MissingTokenException::class);
+        expect(fn(): Me => LivckCloud::me())->toThrow(MissingTokenException::class);
     });
 });
 
