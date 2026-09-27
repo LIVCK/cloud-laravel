@@ -13,7 +13,8 @@ use LIVCK\Cloud\Query\ServiceQuery;
  * Read-only calls against a live API: opt-in, never part of the default suite. Set
  * LIVCK_CLOUD_TOKEN, and LIVCK_CLOUD_BASE_URI for anything but production, then run
  * `composer test:integration`. LIVCK_CLOUD_TOKEN_NO_API, a token of an organization without
- * API access, adds the check of the plan gate.
+ * API access, adds the check of the plan gate; LIVCK_CLOUD_TOKEN_OTHER_ORG, a token of another
+ * organization, the check of clients from withToken() and build().
  */
 
 /** A variable of the process environment, or null when unset or empty. */
@@ -75,6 +76,21 @@ describe('live API', function () use ($skip): void {
         expect(LivckCloud::me()->organization->publicId)->not->toBe('')
             ->and(LivckCloud::probes())->not->toBeEmpty();
     })->skip($skip !== null, $skip ?? '');
+
+    it('sends the token of withToken() and build() instead of the configured one', function (): void {
+        useLiveApi();
+
+        $own = LivckCloud::me()->organization->publicId;
+        $other = LivckCloud::withToken((string) liveEnvironment('LIVCK_CLOUD_TOKEN_OTHER_ORG'))->me()->organization->publicId;
+        $built = LivckCloud::build([
+            'token' => liveEnvironment('LIVCK_CLOUD_TOKEN_OTHER_ORG'),
+            'transport' => 'laravel',
+        ])->me()->organization->publicId;
+
+        expect($other)->not->toBe($own)
+            ->and($built)->toBe($other)
+            ->and(LivckCloud::me()->organization->publicId)->toBe($own);
+    })->skip($skip !== null || liveEnvironment('LIVCK_CLOUD_TOKEN_OTHER_ORG') === null, $skip ?? 'Set LIVCK_CLOUD_TOKEN_OTHER_ORG, a token of another organization, to check clients built on demand.');
 
     it('passes the check command', function (): void {
         useLiveApi();
