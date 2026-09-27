@@ -14,7 +14,7 @@ it('names the SDK first, then the package and the Laravel version', function ():
     LivckCloud::me();
 
     expect($fake->lastRequest()?->header('User-Agent'))
-        ->toBe('livck-cloud-php/1.0.0 PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION)
+        ->toBe('livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION)
         ->toBe(sprintf('livck-cloud-php/%s PHP/%s livck-cloud-laravel/%s Laravel/%s', CloudClient::VERSION, PHP_VERSION, CloudManager::VERSION, Application::VERSION));
 });
 
@@ -25,7 +25,7 @@ it('appends the configured suffix after the package', function (): void {
     LivckCloud::me();
 
     expect($fake->lastRequest()?->header('User-Agent'))
-        ->toBe('livck-cloud-php/1.0.0 PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION . ' hoster-panel/2.3');
+        ->toBe('livck-cloud-php/' . CloudClient::VERSION . ' PHP/' . PHP_VERSION . ' livck-cloud-laravel/1.0.0 Laravel/' . Application::VERSION . ' hoster-panel/2.3');
 });
 
 it('keeps the package in the User-Agent whatever the suffix says', function (mixed $suffix): void {
