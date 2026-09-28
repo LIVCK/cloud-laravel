@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Artisan;
+use LIVCK\Cloud\CloudClient;
 
 function about(): string
 {
@@ -52,7 +53,7 @@ it('offers the section as JSON', function (): void {
     // Laravel snake-cases the section name letter by letter for the JSON keys.
     expect($json['l_i_v_c_k_cloud'] ?? null)->toBe([
         'version' => '1.1.0',
-        'sdk_version' => '1.0.0',
+        'sdk_version' => CloudClient::VERSION,
         'default_connection' => 'default',
         'connection[default]' => 'https://api.livck.cloud/v1, token lvk_Secr3tPr…',
     ]);
