@@ -149,7 +149,7 @@ use LIVCK\Cloud\Builders\EnrollmentKeyBuilder;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
 
 $created = LivckCloud::enrollmentKeys()->create(
-    EnrollmentKeyBuilder::single("Customer {$customer->number}")->tags("customer-servers:{$customer->number}"),
+    EnrollmentKeyBuilder::single("Customer {$customer->number}")->tags("customer:{$customer->number}"),
 );
 
 $order->update(['livck_enrollment_key' => $created->key->id]);
@@ -169,9 +169,9 @@ if ($server !== null) {
 ```
 
 Ask for the server, not for the status, which only says whether the key can still enroll one.
-A key that can no longer enroll is deleted once it is more than 30 days old. A tag that fills a
-synced status page group cannot go on a key (a `ValidationException` on `tags`): give the
-servers a tag of their own, as above.
+A key that can no longer enroll is deleted once it is more than 30 days old. The customer's tag
+may also fill the customer's synced status page group: the server carries it, but synced groups
+leave servers out, so it never shows on the page.
 
 The key and the install command are secrets: dumps, logs and JSON never show them, and
 serializing them throws, so a queued job takes the key's id rather than the created result.
