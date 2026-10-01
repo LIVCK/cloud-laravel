@@ -32,6 +32,7 @@ it('reaches every resource of the default connection', function (Closure $call, 
     'services' => [fn() => LivckCloud::services()->list(), 'GET', '/v1/services'],
     'incidents' => [fn() => LivckCloud::incidents()->list(), 'GET', '/v1/incidents'],
     'maintenances' => [fn() => LivckCloud::maintenances()->list(), 'GET', '/v1/maintenances'],
+    'enrollmentKeys' => [fn() => LivckCloud::enrollmentKeys()->list(), 'GET', '/v1/enrollment-keys'],
     'request()' => [fn() => LivckCloud::request('GET', 'oncall/on-call'), 'GET', '/v1/oncall/on-call'],
     'send()' => [fn() => LivckCloud::send(Request::get('oncall/on-call')), 'GET', '/v1/oncall/on-call'],
 ]);

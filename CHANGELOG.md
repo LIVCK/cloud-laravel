@@ -4,6 +4,13 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `LivckCloud::enrollmentKeys()` in the facade's documented methods, for the enrollment keys of
+  `livck/cloud-php`, and a README section on enrolling customers' servers.
+
 ## [1.1.0] - 2026-09-27
 
 Clients for tokens that are not in `config/livck-cloud.php`, such as a reseller's one per end

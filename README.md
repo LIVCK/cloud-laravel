@@ -137,6 +137,42 @@ otherwise hold a client for every customer's token for as long as it runs. Hold 
 a variable for the request or job at hand rather than calling `withToken()` again for each API
 call. `LivckCloud::fake()` covers both, see [Testing](#testing).
 
+## Servers of your customers
+
+A server is monitored by the LIVCK agent and enrolls with an enrollment key. Create one `single`
+key per server with the customer's tag: the key's tags are the server's, and the install
+cannot replace them (in a reseller organization it cannot add any either). The key and its
+install command come back this once:
+
+```php
+use LIVCK\Cloud\Builders\EnrollmentKeyBuilder;
+use LIVCK\Cloud\Laravel\Facades\LivckCloud;
+
+$created = LivckCloud::enrollmentKeys()->create(
+    EnrollmentKeyBuilder::single("Customer {$customer->number}")->tags("customer:{$customer->number}"),
+);
+
+$order->update(['livck_enrollment_key' => $created->key->id]);
+
+return $created->installCommand->reveal(); // the customer runs it on the server, as root
+```
+
+A single key is valid for 24 hours unless you set `expiresAt()`. Poll it, from a scheduled job
+for instance, until it is exhausted; its `services` then name the new server:
+
+```php
+use LIVCK\Cloud\Enums\EnrollmentKeyStatus;
+
+$key = LivckCloud::enrollmentKeys()->get($order->livck_enrollment_key);
+
+if ($key->status === EnrollmentKeyStatus::Exhausted) {
+    $order->update(['livck_service' => $key->latestService()?->id]);
+}
+```
+
+The key and the install command are secrets: dumps, logs and JSON never show them, and
+serializing them throws, so a queued job takes the key's id rather than the created result.
+
 ## Configuration
 
 | Key | Default | Notes |
