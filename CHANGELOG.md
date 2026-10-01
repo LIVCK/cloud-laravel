@@ -11,6 +11,10 @@ All notable changes to this package are documented here. The format follows
 - `LivckCloud::enrollmentKeys()` in the facade's documented methods, for the enrollment keys of
   `livck/cloud-php`, and a README section on enrolling customers' servers.
 
+### Changed
+
+- Requires `livck/cloud-php` 1.2 or later.
+
 ## [1.1.0] - 2026-09-27
 
 Clients for tokens that are not in `config/livck-cloud.php`, such as a reseller's one per end

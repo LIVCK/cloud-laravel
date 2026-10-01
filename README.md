@@ -149,7 +149,7 @@ use LIVCK\Cloud\Builders\EnrollmentKeyBuilder;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
 
 $created = LivckCloud::enrollmentKeys()->create(
-    EnrollmentKeyBuilder::single("Customer {$customer->number}")->tags("customer:{$customer->number}"),
+    EnrollmentKeyBuilder::single("Customer {$customer->number}")->tags("customer-servers:{$customer->number}"),
 );
 
 $order->update(['livck_enrollment_key' => $created->key->id]);
@@ -158,20 +158,25 @@ return $created->installCommand->reveal(); // the customer runs it on the server
 ```
 
 A single key is valid for 24 hours unless you set `expiresAt()`. Poll it, from a scheduled job
-for instance, until it is exhausted; its `services` then name the new server:
+for instance, until it names the new server:
 
 ```php
-use LIVCK\Cloud\Enums\EnrollmentKeyStatus;
+$server = LivckCloud::enrollmentKeys()->get($order->livck_enrollment_key)->latestService();
 
-$key = LivckCloud::enrollmentKeys()->get($order->livck_enrollment_key);
-
-if ($key->status === EnrollmentKeyStatus::Exhausted) {
-    $order->update(['livck_service' => $key->latestService()?->id]);
+if ($server !== null) {
+    $order->update(['livck_service' => $server->id]);
 }
 ```
 
+Ask for the server, not for the status, which only says whether the key can still enroll one.
+A key that can no longer enroll is deleted once it is more than 30 days old. A tag that fills a
+synced status page group cannot go on a key (a `ValidationException` on `tags`): give the
+servers a tag of their own, as above.
+
 The key and the install command are secrets: dumps, logs and JSON never show them, and
 serializing them throws, so a queued job takes the key's id rather than the created result.
+With `transport: 'laravel'` and Telescope's HTTP client watcher, hide them there as well:
+`Telescope::hideResponseParameters(['data.token', 'data.install_command'])`.
 
 ## Configuration
 
