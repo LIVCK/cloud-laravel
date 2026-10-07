@@ -4,7 +4,9 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-07
+
+Enrollment keys of `livck/cloud-php` 1.2 on the facade.
 
 ### Added
 
@@ -73,5 +75,6 @@ First release, for PHP 8.3 and later with Laravel 12 or 13, on top of `livck/clo
 - The User-Agent names the package and the Laravel version after the SDK:
   `livck-cloud-php/1.0.0 PHP/8.4.1 livck-cloud-laravel/1.0.0 Laravel/13.2.0`.
 
+[1.2.0]: https://github.com/LIVCK/cloud-laravel/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/LIVCK/cloud-laravel/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/LIVCK/cloud-laravel/releases/tag/v1.0.0
