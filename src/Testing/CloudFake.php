@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace LIVCK\Cloud\Laravel\Testing;
 
+use ArrayObject;
 use Closure;
 use LIVCK\Cloud\ClientOptions;
 use LIVCK\Cloud\CloudClient;
+use LIVCK\Cloud\Testing\ExpectationFailedException;
 use LIVCK\Cloud\Testing\FakeHttpClient;
 use LIVCK\Cloud\Testing\MockResponse;
 use LIVCK\Cloud\Testing\RecordedRequest;
@@ -33,6 +35,14 @@ use WeakMap;
  * no configured token is needed, every fake sends {@see TOKEN}. A token passed to
  * `build()` or `withToken()` is still checked, so a blank one throws as in production.
  *
+ * Heartbeat pings are recorded apart from the requests: nothing is sent, every ping is kept
+ * whether a ping URL is known or not, and `fake()` turns heartbeats on in every environment,
+ * so that a test sees what the scheduler and the workers would ping:
+ *
+ *     $fake = LivckCloud::fake();
+ *     $this->artisan('schedule:run');
+ *     $fake->assertPinged('export:nightly', 'start', 'success');
+ *
  * A failed assertion throws the SDK's ExpectationFailedException, which every test runner
  * reports as a failure. A passed one counts as an assertion with PHPUnit (and Pest), as
  * with Laravel's own fakes, so a test resting on it alone is not flagged as risky.
@@ -52,9 +62,13 @@ final readonly class CloudFake
     /** @var WeakMap<RecordedRequest, string> */
     private WeakMap $senders;
 
+    /** @var ArrayObject<int, RecordedPing> */
+    private ArrayObject $pings;
+
     public function __construct(private FakeHttpClient $http)
     {
         $this->senders = new WeakMap();
+        $this->pings = new ArrayObject();
     }
 
     /**
@@ -190,6 +204,80 @@ final readonly class CloudFake
     public function http(): FakeHttpClient
     {
         return $this->http;
+    }
+
+    /**
+     * Record a heartbeat ping instead of sending it.
+     *
+     * @internal
+     */
+    public function recordPing(RecordedPing $ping): void
+    {
+        $this->pings->append($ping);
+    }
+
+    /**
+     * Every heartbeat ping, in order; only one key's when a key is given.
+     *
+     * @return list<RecordedPing>
+     */
+    public function pings(?string $key = null): array
+    {
+        $pings = array_values($this->pings->getArrayCopy());
+
+        return $key === null ? $pings : array_values(array_filter($pings, static fn(RecordedPing $ping): bool => $ping->key === $key));
+    }
+
+    /**
+     * The heartbeat was pinged. With signals, it got exactly these, in this order:
+     * `assertPinged('export:nightly', 'start', 'success')`; an exit code as a string (`'3'`).
+     */
+    public function assertPinged(string $key, string ...$signals): self
+    {
+        $got = array_map(static fn(RecordedPing $ping): string => $ping->signal, $this->pings($key));
+
+        if ($got === []) {
+            throw new ExpectationFailedException(sprintf('The heartbeat [%s] was not pinged. Pinged: %s', $key, $this->describePings()));
+        }
+
+        if ($signals !== [] && $got !== $signals) {
+            throw new ExpectationFailedException(sprintf('The heartbeat [%s] got [%s], expected [%s].', $key, implode(', ', $got), implode(', ', $signals)));
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    public function assertNotPinged(string $key): self
+    {
+        $got = array_map(static fn(RecordedPing $ping): string => $ping->signal, $this->pings($key));
+
+        if ($got !== []) {
+            throw new ExpectationFailedException(sprintf('The heartbeat [%s] was pinged: [%s].', $key, implode(', ', $got)));
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    public function assertNothingPinged(): self
+    {
+        if ($this->pings->count() > 0) {
+            throw new ExpectationFailedException(sprintf('Expected no heartbeat ping. Pinged: %s', $this->describePings()));
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    private function describePings(): string
+    {
+        $pings = array_map(static fn(RecordedPing $ping): string => $ping->key . ' ' . $ping->signal, $this->pings());
+
+        return $pings === [] ? 'nothing' : implode(', ', $pings);
     }
 
     /**
