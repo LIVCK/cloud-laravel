@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Artisan;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
 use LIVCK\Cloud\Laravel\Heartbeats\CachedPingUrls;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
 use LIVCK\Cloud\Testing\MockResponse;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -52,6 +53,17 @@ it('declares now and shows what LIVCK did per key', function (): void {
         ->and($output)->not->toContain('hb_From')
         ->and(app(CachedPingUrls::class)->resolve('export:nightly')?->url->reveal())->toBe(SYNC_URL)
         ->and($declarations->recorded())->toHaveCount(1);
+});
+
+it('declares whatever the scheduler declared before', function (): void {
+    $declarations = declarationsVia([declared(['export:nightly' => SYNC_URL, 'report:send' => SYNC_URL]), declared(['export:nightly' => SYNC_URL, 'report:send' => SYNC_URL])]);
+    heartbeatsOn();
+    scheduleShop();
+
+    app(HeartbeatMonitor::class)->schedulerStarting();
+    [$exitCode] = sync();
+
+    expect($exitCode)->toBe(0)->and($declarations->recorded())->toHaveCount(2);
 });
 
 it('fails with what was not created and why, and lists what is no longer in the code', function (): void {
@@ -174,6 +186,27 @@ it('fails with the reason when LIVCK refuses', function (MockResponse $response,
     'no answer' => [MockResponse::networkError('Connection refused'), 'LIVCK could not be reached'],
     '429' => [MockResponse::error('Too Many Attempts.', 429)->withRetryAfter(45), 'LIVCK limits how often a token may declare heartbeats and asked to wait (HTTP 429), so nothing was declared. Run the command again in 45 seconds; the scheduler waits as long.'],
 ]);
+
+it('keeps the scheduler away for as long as a 429 of the command asks', function (): void {
+    Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::parse('2026-11-27 10:00:00', 'UTC'));
+    $declarations = declarationsVia([MockResponse::error('Too Many Attempts.', 429)->withRetryAfter(45), declared(['export:nightly' => SYNC_URL])]);
+    useConnection('default', ['token' => TEST_TOKEN, 'max_retries' => 0]);
+    heartbeatsOn();
+    schedule()->command('export:nightly')->dailyAt('03:00')->heartbeat();
+
+    expect(sync()[0])->toBe(1);
+
+    Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::now()->addSeconds(44));
+    app(HeartbeatMonitor::class)->schedulerStarting();
+    expect($declarations->recorded())->toHaveCount(1);
+
+    Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::now()->addSeconds(2));
+    app(HeartbeatMonitor::class)->schedulerStarting();
+    expect($declarations->recorded())->toHaveCount(2)
+        ->and(app(CachedPingUrls::class)->resolve('export:nightly')?->url->reveal())->toBe(SYNC_URL);
+
+    Illuminate\Support\Carbon::setTestNow();
+});
 
 it('works with the fake', function (): void {
     $fake = LivckCloud::fake();

@@ -97,3 +97,47 @@ it('shows a broken configuration as an error', function (): void {
 
     expect($exitCode)->toBe(2)->and($output)->toContain('livck-cloud.heartbeats.queues must be a list of queue names, got string.');
 });
+
+it('says how the last declaration relates to the code', function (): void {
+    Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::parse('2026-11-27 10:00:00', 'UTC'));
+    $declarations = declarationsVia([
+        declared(['export:nightly' => 'https://ping.livck.test/hb_DeclaredExportUrlAndSecret0001']),
+        LIVCK\Cloud\Testing\MockResponse::error('Unauthenticated.', 401),
+    ]);
+    heartbeatsOn();
+    $event = schedule()->command('export:nightly')->dailyAt('03:00')->heartbeat();
+
+    expect(heartbeatsCommand()[1])->toContain('never declared; the next scheduler run declares');
+
+    app(LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor::class)->schedulerStarting();
+    expect(heartbeatsCommand()[1])->toContain('matches the code (2026-11-27 10:00:00 UTC)')
+        ->toContain('| export:nightly | schedule | 0 3 * * * (UTC) | yes | cache |');
+
+    $event->dailyAt('04:00');
+    expect(heartbeatsCommand()[1])->toContain('differs from the code (2026-11-27 10:00:00 UTC); the next scheduler run declares');
+
+    app(LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor::class)->schedulerStarting();
+    expect(heartbeatsCommand()[1])->toContain('paused until 2026-11-27 10:15:00 UTC: the API token is not accepted')
+        ->and($declarations->recorded())->toHaveCount(2);
+
+    Illuminate\Support\Carbon::setTestNow();
+});
+
+it('tells a missing permission apart from a limited view', function (LIVCK\Cloud\Testing\MockResponse $response, string $line, string $not): void {
+    Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::parse('2026-11-27 10:00:00', 'UTC'));
+    declarationsVia([$response]);
+    heartbeatsOn();
+    schedule()->command('export:nightly')->dailyAt('03:00')->heartbeat();
+
+    app(LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor::class)->schedulerStarting();
+
+    $output = heartbeatsCommand()[1];
+
+    expect($output)->toContain('paused until 2026-11-27 10:15:00 UTC: ' . $line)
+        ->and($output)->not->toContain($not);
+
+    Illuminate\Support\Carbon::setTestNow();
+})->with([
+    'permission' => [LIVCK\Cloud\Testing\MockResponse::error("This token lacks the required 'heartbeats.declare' permission.", 403), 'the token lacks heartbeats.declare', 'sees only part'],
+    'restricted view' => [LIVCK\Cloud\Testing\MockResponse::error('Declaring heartbeats requires a token that sees the whole organization.', 403, extra: ['code' => 'restricted_view']), 'the token sees only part of the organization', 'lacks heartbeats.declare'],
+]);
