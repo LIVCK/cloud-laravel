@@ -13,8 +13,12 @@ use Illuminate\Support\ServiceProvider;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Laravel\Console\AboutSection;
 use LIVCK\Cloud\Laravel\Console\CheckCommand;
+use LIVCK\Cloud\Laravel\Console\HeartbeatsCommand;
+use LIVCK\Cloud\Laravel\Console\SyncHeartbeatsCommand;
 use LIVCK\Cloud\Laravel\Heartbeats\CachedPingUrls;
 use LIVCK\Cloud\Laravel\Heartbeats\ConfigPingUrls;
+use LIVCK\Cloud\Laravel\Heartbeats\DeclarationClientFactory;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatDeclarer;
 use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMacro;
 use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
 use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatPinger;
@@ -25,7 +29,8 @@ use LogicException;
 
 /**
  * Registers the connection manager (`livck-cloud`), the CloudClientInterface binding, the
- * configuration, `livck-cloud:check` and the `about` section.
+ * configuration, `livck-cloud:check`, `livck-cloud:heartbeats`, `livck-cloud:heartbeats:sync`,
+ * the `about` section and the `->heartbeat()` macro of scheduled events.
  */
 class CloudServiceProvider extends ServiceProvider
 {
@@ -49,6 +54,8 @@ class CloudServiceProvider extends ServiceProvider
         $this->app->singleton(CachedPingUrls::class, static fn(): CachedPingUrls => new CachedPingUrls(self::currentApplication(...)));
         $this->app->singleton(PingUrlResolver::class, static fn(Application $app): PingUrlResolver => new PingUrls($app->make(ConfigPingUrls::class), $app->make(CachedPingUrls::class)));
         $this->app->singleton(PingClientFactory::class, static fn(): PingClientFactory => new PingClientFactory());
+        $this->app->singleton(HeartbeatDeclarer::class, static fn(): HeartbeatDeclarer => new HeartbeatDeclarer(self::currentApplication(...)));
+        $this->app->singleton(DeclarationClientFactory::class, static fn(): DeclarationClientFactory => new DeclarationClientFactory());
     }
 
     public function boot(): void
@@ -60,7 +67,7 @@ class CloudServiceProvider extends ServiceProvider
                 __DIR__ . '/../config/livck-cloud.php' => $this->app->configPath('livck-cloud.php'),
             ], 'livck-cloud-config');
 
-            $this->commands([CheckCommand::class]);
+            $this->commands([CheckCommand::class, HeartbeatsCommand::class, SyncHeartbeatsCommand::class]);
 
             if (class_exists(AboutCommand::class)) {
                 AboutCommand::add('LIVCK Cloud', static fn(): array => (new AboutSection(self::currentApplication()->make(Config::class)))());
