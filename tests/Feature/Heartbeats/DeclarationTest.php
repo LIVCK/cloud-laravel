@@ -156,6 +156,24 @@ describe('who declares what', function (): void {
             ->and(declaredHeartbeats($declarations, 1)[0]['schedule'] ?? null)->toBe(['type' => 'cron', 'expression' => '0 4 * * *', 'timezone' => 'UTC']);
     });
 
+    it('never declares from a worker, even when its list differs from the one declared', function (): void {
+        useDatabaseQueue();
+        $declarations = declarationsVia([declared(['job:sync-orders' => ORDERS_URL])]);
+        $pings = heartbeatsOn();
+        schedule()->job(new SyncOrders())->everyMinute()->heartbeat();
+
+        runSchedule();
+        expect($declarations->recorded())->toHaveCount(1);
+
+        // The worker of an earlier deploy: the same job, another schedule.
+        schedule()->command('report:send')->hourly()->heartbeat();
+        work();
+        LivckCloud::heartbeat('job:sync-orders')->success();
+
+        expect($declarations->recorded())->toHaveCount(1)
+            ->and(pingedPaths($pings))->toBe(['/hb_DeclaredOrdersUrlAndSecret0002', '/hb_DeclaredOrdersUrlAndSecret0002']);
+    });
+
     it('declares only in schedule:run, not in another Artisan command', function (): void {
         $declarations = declarationsVia();
         heartbeatsOn();

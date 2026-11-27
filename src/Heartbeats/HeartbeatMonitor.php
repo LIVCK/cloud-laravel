@@ -5,14 +5,22 @@ declare(strict_types=1);
 namespace LIVCK\Cloud\Laravel\Heartbeats;
 
 use Closure;
+use Illuminate\Bus\UniqueLock;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Container\Container;
+use Illuminate\Contracts\Bus\QueueingDispatcher;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Contracts\Queue\Job;
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Queue;
+use Illuminate\Support\Facades\Date;
+use LIVCK\Cloud\Ping\PingDetails;
 use Throwable;
 use WeakMap;
 
@@ -58,6 +66,17 @@ final class HeartbeatMonitor
     /** @var WeakMap<Event, true> */
     private WeakMap $hooked;
 
+    /** @var WeakMap<Schedule, true> */
+    private WeakMap $pulsing;
+
+    /**
+     * When the worker began the current attempt of a scheduled job, by the job instance the
+     * worker holds; gone with that instance, so nothing outlives the attempt.
+     *
+     * @var WeakMap<Job, float>
+     */
+    private WeakMap $attempts;
+
     private bool $active = false;
 
     private bool $payloadHook = false;
@@ -71,6 +90,8 @@ final class HeartbeatMonitor
     {
         $this->marks = new WeakMap();
         $this->hooked = new WeakMap();
+        $this->pulsing = new WeakMap();
+        $this->attempts = new WeakMap();
     }
 
     /** The monitor of the current application, null when there is none. */
@@ -127,6 +148,7 @@ final class HeartbeatMonitor
         }
 
         $this->listen();
+        $this->schedulePulses();
     }
 
     public function isActive(): bool
@@ -257,6 +279,46 @@ final class HeartbeatMonitor
         return [self::PAYLOAD_KEY => $key];
     }
 
+    /** No ping: whether this attempt runs or releases itself is not known yet. */
+    public function jobProcessing(Job $job): void
+    {
+        $this->forScheduledJob($job, function () use ($job): void {
+            $this->attempts[$job] = $this->now();
+        });
+    }
+
+    public function jobProcessed(Job $job): void
+    {
+        if (! $this->active) {
+            return;
+        }
+
+        $this->safely(function () use ($job): void {
+            $startedAt = $this->attempts[$job] ?? null;
+            unset($this->attempts[$job]);
+
+            // Fired for a job that released itself (WithoutOverlapping, RateLimited) as well.
+            if ($job->isReleased() || $job->hasFailed()) {
+                return;
+            }
+
+            $this->forScheduledJob($job, function (string $key) use ($startedAt): void {
+                $details = $startedAt === null ? null : PingDetails::make()->withDuration(round(max(0.0, $this->now() - $startedAt), 3));
+
+                $this->pinger()->success($key, $details);
+            });
+        });
+    }
+
+    public function jobFailed(Job $job): void
+    {
+        if ($this->active) {
+            unset($this->attempts[$job]);
+        }
+
+        $this->forScheduledJob($job, fn(string $key) => $this->pinger()->fail($key));
+    }
+
     /**
      * Once per `schedule:run`, before any task: the problems of the list go to the log, and
      * the list is declared to LIVCK when it is due ({@see HeartbeatDeclarer::declareIfDue()}).
@@ -276,6 +338,47 @@ final class HeartbeatMonitor
             }
 
             $this->app()->make(HeartbeatDeclarer::class)->declareIfDue($list);
+        });
+    }
+
+    /**
+     * Queue one pulse for a queue, unless one is still waiting there.
+     */
+    public function dispatchPulse(QueueTarget $target): void
+    {
+        if (! $this->active) {
+            return;
+        }
+
+        $this->safely(function () use ($target): void {
+            $pulse = new QueuePulse($target->key, $target->connection, $target->queue, $this->now());
+            $lock = new UniqueLock($pulse->uniqueVia());
+
+            if (! $lock->acquire($pulse)) {
+                return;
+            }
+
+            try {
+                $this->app()->make(QueueingDispatcher::class)->dispatchToQueue($pulse);
+            } catch (Throwable $e) {
+                $lock->release($pulse);
+
+                throw $e;
+            }
+        });
+    }
+
+    /** A pulse reached a worker: ping the queue's heartbeat with how long it waited. */
+    public function pulse(string $key, float $queuedAt): void
+    {
+        if (! $this->active) {
+            return;
+        }
+
+        $this->safely(function () use ($key, $queuedAt): void {
+            $wait = round(max(0.0, $this->now() - $queuedAt), 3);
+
+            $this->pinger()->success($key, PingDetails::make()->withMetric('wait_seconds', $wait));
         });
     }
 
@@ -300,6 +403,18 @@ final class HeartbeatMonitor
     {
         $events = $this->app()->make(Dispatcher::class);
 
+        $events->listen(JobProcessing::class, static function (JobProcessing $event): void {
+            self::current()?->jobProcessing($event->job);
+        });
+
+        $events->listen(JobProcessed::class, static function (JobProcessed $event): void {
+            self::current()?->jobProcessed($event->job);
+        });
+
+        $events->listen(JobFailed::class, static function (JobFailed $event): void {
+            self::current()?->jobFailed($event->job);
+        });
+
         $events->listen(CommandStarting::class, static function (CommandStarting $event): void {
             if ($event->command === 'schedule:run') {
                 self::current()?->schedulerStarting();
@@ -316,6 +431,59 @@ final class HeartbeatMonitor
         $this->payloadHook = true;
 
         Queue::createPayloadUsing(static fn(): array => self::current()?->payload() ?? []);
+    }
+
+    private function schedulePulses(): void
+    {
+        $app = $this->app();
+
+        $app->afterResolving(Schedule::class, static function (Schedule $schedule): void {
+            self::current()?->addPulses($schedule);
+        });
+
+        if ($app->resolved(Schedule::class)) {
+            $this->addPulses($app->make(Schedule::class));
+        }
+    }
+
+    /**
+     * One event per queue, every minute. The pulse's unique lock keeps at most one in a queue.
+     *
+     * @internal
+     */
+    public function addPulses(Schedule $schedule): void
+    {
+        if (! $this->active || isset($this->pulsing[$schedule])) {
+            return;
+        }
+
+        $this->pulsing[$schedule] = true;
+
+        $this->safely(function () use ($schedule): void {
+            foreach ((new HeartbeatConfig($this->app()->make(Config::class)))->queues() as $target) {
+                $schedule->call(static function () use ($target): void {
+                    self::current()?->dispatchPulse($target);
+                })->everyMinute()->name('livck-cloud:queue-pulse ' . $target->key);
+            }
+        });
+    }
+
+    /**
+     * @param Closure(string): mixed $ping
+     */
+    private function forScheduledJob(Job $job, Closure $ping): void
+    {
+        if (! $this->active) {
+            return;
+        }
+
+        $this->safely(function () use ($job, $ping): void {
+            $key = $job->payload()[self::PAYLOAD_KEY] ?? null;
+
+            if (is_string($key) && $key !== '') {
+                $ping($key);
+            }
+        });
     }
 
     /**
@@ -345,6 +513,11 @@ final class HeartbeatMonitor
     private function pinger(): HeartbeatPinger
     {
         return $this->app()->make(HeartbeatPinger::class);
+    }
+
+    private function now(): float
+    {
+        return (float) Date::now()->format('U.u');
     }
 
     private function app(): Application
