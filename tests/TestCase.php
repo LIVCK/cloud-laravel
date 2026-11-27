@@ -25,6 +25,21 @@ abstract class TestCase extends BaseTestCase
         'transport' => 'sdk',
     ];
 
+    /**
+     * The shipped heartbeat settings: on in production only, so off while testing until a test
+     * turns them on.
+     */
+    public const array HEARTBEATS = [
+        'app' => 'shop',
+        'environments' => ['production'],
+        'queues' => [],
+        'custom' => [],
+        'urls' => [],
+        'timeout' => 3,
+        'declare_timeout' => 3,
+        'cache_store' => 'array',
+    ];
+
     protected function getPackageProviders($app): array
     {
         return [CloudServiceProvider::class];
@@ -43,5 +58,9 @@ abstract class TestCase extends BaseTestCase
         $config->set('livck-cloud.connections', ['default' => self::DEFAULT_CONNECTION]);
         $config->set('livck-cloud.log_channel', null);
         $config->set('livck-cloud.catalog_cache', ['store' => 'array', 'ttl' => 3600]);
+        $config->set('livck-cloud.heartbeats', self::HEARTBEATS);
+        $config->set('app.key', 'base64:' . base64_encode(str_repeat('k', 32)));
+        $config->set('app.timezone', 'UTC');
+        $config->set('cache.default', 'array');
     }
 }

@@ -15,12 +15,16 @@ it('ships a configuration with every documented key', function (): void {
     $config = require __DIR__ . '/../../config/livck-cloud.php';
     $connections = $config['connections'] ?? null;
 
-    expect(array_keys($config))->toBe(['default', 'connections', 'log_channel', 'catalog_cache'])
+    expect(array_keys($config))->toBe(['default', 'connections', 'log_channel', 'catalog_cache', 'heartbeats'])
         ->and($connections)->toBeArray()
         ->and(is_array($connections) ? array_keys($connections) : null)->toBe(['default'])
         ->and(is_array($connections) && is_array($connections['default']) ? array_keys($connections['default']) : null)
         ->toBe(['token', 'base_uri', 'timeout', 'connect_timeout', 'max_retries', 'max_retry_after', 'idempotency', 'locale', 'user_agent_suffix', 'transport'])
-        ->and($config['catalog_cache'])->toBeArray()->toHaveKeys(['store', 'ttl']);
+        ->and($config['catalog_cache'])->toBeArray()->toHaveKeys(['store', 'ttl'])
+        ->and(is_array($config['heartbeats']) ? array_keys($config['heartbeats']) : null)
+        ->toBe(['app', 'environments', 'queues', 'queue_grace', 'custom', 'urls', 'timeout', 'declare_timeout', 'cache_store'])
+        ->and(is_array($config['heartbeats']) ? $config['heartbeats']['environments'] : null)->toBe(['production'])
+        ->and(is_array($config['heartbeats']) ? $config['heartbeats']['queue_grace'] : null)->toBe(120);
 });
 
 it('merges its configuration under what the application already has', function (): void {
