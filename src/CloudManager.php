@@ -71,7 +71,7 @@ class CloudManager
 {
     use ForwardsCalls;
 
-    public const string VERSION = '1.2.0';
+    public const string VERSION = '1.3.0';
 
     public const string USER_AGENT_PRODUCT = 'livck-cloud-laravel';
 
@@ -506,7 +506,7 @@ class CloudManager
 
     /**
      * The package's product token after the SDK's (Stripe's `setAppInfo` convention), then
-     * the configured suffix: `livck-cloud-laravel/1.2.0 Laravel/13.2.0 my-panel/2.3`.
+     * the configured suffix: `livck-cloud-laravel/1.3.0 Laravel/13.2.0 my-panel/2.3`.
      */
     private function userAgentSuffix(?string $configured): string
     {
