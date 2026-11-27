@@ -65,6 +65,9 @@ use SensitiveParameter;
  * @method static CloudFake assertPinged(string $key, string ...$signals)
  * @method static CloudFake assertNotPinged(string $key)
  * @method static CloudFake assertNothingPinged()
+ * @method static CloudFake assertDeclared(string ...$keys)
+ * @method static CloudFake assertNotDeclared(string $key)
+ * @method static CloudFake assertNothingDeclared()
  *
  * @see CloudManager
  */
