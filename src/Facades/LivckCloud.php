@@ -16,6 +16,7 @@ use LIVCK\Cloud\Http\Response;
 use LIVCK\Cloud\Laravel\CloudManager;
 use LIVCK\Cloud\Laravel\Testing\CloudFake;
 use LIVCK\Cloud\Resources\EnrollmentKeysInterface;
+use LIVCK\Cloud\Resources\HeartbeatsInterface;
 use LIVCK\Cloud\Resources\IncidentsInterface;
 use LIVCK\Cloud\Resources\MaintenancesInterface;
 use LIVCK\Cloud\Resources\ServicesInterface;
@@ -49,6 +50,7 @@ use SensitiveParameter;
  * @method static IncidentsInterface incidents()
  * @method static MaintenancesInterface maintenances()
  * @method static EnrollmentKeysInterface enrollmentKeys()
+ * @method static HeartbeatsInterface heartbeats()
  * @method static Me me()
  * @method static list<Probe> probes()
  * @method static CheckTypeCatalog checkTypes()
