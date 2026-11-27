@@ -13,8 +13,14 @@ use Illuminate\Support\ServiceProvider;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Laravel\Console\AboutSection;
 use LIVCK\Cloud\Laravel\Console\CheckCommand;
+use LIVCK\Cloud\Laravel\Heartbeats\CachedPingUrls;
+use LIVCK\Cloud\Laravel\Heartbeats\ConfigPingUrls;
 use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMacro;
 use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatPinger;
+use LIVCK\Cloud\Laravel\Heartbeats\PingClientFactory;
+use LIVCK\Cloud\Laravel\Heartbeats\PingUrlResolver;
+use LIVCK\Cloud\Laravel\Heartbeats\PingUrls;
 use LogicException;
 
 /**
@@ -38,6 +44,11 @@ class CloudServiceProvider extends ServiceProvider
 
         // Heartbeats. Like the manager, each reads the application of the moment.
         $this->app->singleton(HeartbeatMonitor::class, static fn(): HeartbeatMonitor => new HeartbeatMonitor(self::currentApplication(...)));
+        $this->app->singleton(HeartbeatPinger::class, static fn(): HeartbeatPinger => new HeartbeatPinger(self::currentApplication(...)));
+        $this->app->singleton(ConfigPingUrls::class, static fn(): ConfigPingUrls => new ConfigPingUrls(static fn(): Config => self::currentApplication()->make(Config::class)));
+        $this->app->singleton(CachedPingUrls::class, static fn(): CachedPingUrls => new CachedPingUrls(self::currentApplication(...)));
+        $this->app->singleton(PingUrlResolver::class, static fn(Application $app): PingUrlResolver => new PingUrls($app->make(ConfigPingUrls::class), $app->make(CachedPingUrls::class)));
+        $this->app->singleton(PingClientFactory::class, static fn(): PingClientFactory => new PingClientFactory());
     }
 
     public function boot(): void

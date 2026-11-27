@@ -23,6 +23,9 @@ use LIVCK\Cloud\Http\Request;
 use LIVCK\Cloud\Http\Response;
 use LIVCK\Cloud\Laravel\Exceptions\ConfigurationException;
 use LIVCK\Cloud\Laravel\Exceptions\MissingTokenException;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatPinger;
+use LIVCK\Cloud\Laravel\Heartbeats\NamedHeartbeat;
 use LIVCK\Cloud\Laravel\Http\LaravelHttpClient;
 use LIVCK\Cloud\Laravel\Support\ConfigValue;
 use LIVCK\Cloud\Laravel\Support\ConnectionConfig;
@@ -203,8 +206,51 @@ class CloudManager
     public function fake(iterable $responses = []): CloudFake
     {
         $this->connections = [];
+        $this->fake = new CloudFake(new FakeHttpClient($responses));
+        $this->app()->make(HeartbeatMonitor::class)->activate();
 
-        return $this->fake = new CloudFake(new FakeHttpClient($responses));
+        return $this->fake;
+    }
+
+    /**
+     * The fake while one is active.
+     *
+     * @internal
+     */
+    public function currentFake(): ?CloudFake
+    {
+        return $this->fake;
+    }
+
+    /**
+     * A heartbeat to ping from your own code, by its key; the ping URL comes from
+     * `heartbeats.urls`. Never throws.
+     *
+     *     LivckCloud::heartbeat('backup')->exitCode($code);
+     */
+    public function heartbeat(string $key): NamedHeartbeat
+    {
+        $app = $this->app();
+
+        return new NamedHeartbeat(trim($key), $app->make(HeartbeatPinger::class), $app->make(HeartbeatMonitor::class));
+    }
+
+    /**
+     * The heartbeat was pinged; with signals, exactly these in this order. See {@see CloudFake::assertPinged()}.
+     */
+    public function assertPinged(string $key, string ...$signals): CloudFake
+    {
+        return $this->activeFake()->assertPinged($key, ...$signals);
+    }
+
+    public function assertNotPinged(string $key): CloudFake
+    {
+        return $this->activeFake()->assertNotPinged($key);
+    }
+
+    public function assertNothingPinged(): CloudFake
+    {
+        return $this->activeFake()->assertNothingPinged();
     }
 
     /**

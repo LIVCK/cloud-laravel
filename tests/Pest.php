@@ -3,8 +3,15 @@
 declare(strict_types=1);
 
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
+use LIVCK\Cloud\Laravel\Heartbeats\PingClientFactory;
 use LIVCK\Cloud\Laravel\Tests\TestCase;
+use LIVCK\Cloud\Testing\FakeHttpClient;
+use LIVCK\Cloud\Testing\MockResponse;
+use LIVCK\Cloud\Testing\RecordedRequest;
 
 pest()->extend(TestCase::class)->in('Feature', 'Integration');
 
@@ -164,7 +171,58 @@ function probesPayload(): array
     ];
 }
 
+/**
+ * Turn heartbeats on the way a scheduler or worker in an allowed environment does, with pings
+ * sent to a fake HTTP client that answers 200 unless told otherwise.
+ *
+ * @param array<string, string> $urls ping URLs by key, written into heartbeats.urls
+ * @param list<MockResponse>|null $responses answered in order; 200 for up to 50 pings when null
+ */
+function heartbeatsOn(array $urls = [], ?array $responses = null): FakeHttpClient
+{
+    config()->set('livck-cloud.heartbeats.environments', ['testing']);
+    config()->set('livck-cloud.heartbeats.urls', $urls);
+
+    $http = new FakeHttpClient($responses ?? array_fill(0, 50, MockResponse::json(['ok' => true])));
+    app()->instance(PingClientFactory::class, new PingClientFactory($http));
+    app(HeartbeatMonitor::class)->boot();
+
+    return $http;
+}
+
+/**
+ * The path of every ping the fake HTTP client received, in order.
+ *
+ * @return list<string>
+ */
+function pingedPaths(FakeHttpClient $http): array
+{
+    return array_map(static fn(RecordedRequest $request): string => $request->path(), $http->recorded());
+}
+
 function schedule(): Schedule
 {
     return app(Schedule::class);
+}
+/**
+ * Collects the messages logged from here on, as level and interpolated text.
+ *
+ * @return ArrayObject<int, string>
+ */
+function loggedMessages(): ArrayObject
+{
+    /** @var ArrayObject<int, string> $messages */
+    $messages = new ArrayObject();
+
+    Event::listen(MessageLogged::class, static function (MessageLogged $event) use ($messages): void {
+        $text = $event->message;
+
+        foreach ($event->context as $key => $value) {
+            $text = str_replace('{' . $key . '}', is_scalar($value) ? (string) $value : get_debug_type($value), $text);
+        }
+
+        $messages->append($event->level . ': ' . $text);
+    });
+
+    return $messages;
 }

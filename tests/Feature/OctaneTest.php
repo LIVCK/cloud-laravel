@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Http;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Laravel\CloudManager;
 use LIVCK\Cloud\Laravel\Facades\LivckCloud;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
 use LIVCK\Cloud\Testing\MockResponse;
 use LIVCK\Cloud\Testing\RecordedRequest;
 
@@ -153,4 +154,45 @@ it('reads the configuration of the request it serves', function (): void {
 
     expect($default)->toBe('customer-b')
         ->and($manager->getDefaultConnection())->toBe('default');
+});
+
+it('pings the URL each request configures, and keeps none of them', function (): void {
+    $http = heartbeatsOn();
+    $worker = app();
+
+    inOctaneRequest($worker, function (Application $app): void {
+        $app->make(Repository::class)->set('livck-cloud.heartbeats.urls', ['backup' => 'https://ping.livck.test/hb_first']);
+        LivckCloud::heartbeat('backup')->success();
+    });
+
+    inOctaneRequest($worker, function (Application $app): void {
+        $app->make(Repository::class)->set('livck-cloud.heartbeats.urls', ['backup' => 'https://ping.livck.test/hb_second']);
+        LivckCloud::heartbeat('backup')->success();
+    });
+
+    // A request that configures no URL sends nothing, rather than the last request's URL.
+    inOctaneRequest($worker, function (): void {
+        LivckCloud::heartbeat('backup')->success();
+    });
+
+    expect(pingedPaths($http))->toBe(['/hb_first', '/hb_second']);
+});
+
+it('pings only in a request whose environment allows it', function (): void {
+    $http = heartbeatsOn(['backup' => 'https://ping.livck.test/hb_backup']);
+    config()->set('livck-cloud.heartbeats.environments', ['production']);
+    app()->forgetInstance(HeartbeatMonitor::class);
+    $worker = app();
+
+    inOctaneRequest($worker, function (Application $app): void {
+        $app->make(Repository::class)->set('livck-cloud.heartbeats.environments', ['testing']);
+        LivckCloud::heartbeat('backup')->success();
+    });
+
+    inOctaneRequest($worker, function (): void {
+        LivckCloud::heartbeat('backup')->success();
+    });
+
+    expect(pingedPaths($http))->toBe(['/hb_backup'])
+        ->and(app(HeartbeatMonitor::class)->isActive())->toBeFalse();
 });
