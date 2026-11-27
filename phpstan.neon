@@ -16,3 +16,10 @@ parameters:
         - tests/Pest.php
     configDirectories:
         - %currentWorkingDirectory%/config
+    ignoreErrors:
+        # Larastan describes every closure macro as static, and the strict rules then flag the
+        # call on the event the macro is bound to.
+        -
+            identifier: staticMethod.dynamicCall
+            message: '#^Dynamic call to static method Illuminate\\Console\\Scheduling\\(Callback)?Event\:\:heartbeat\(\)\.$#'
+            path: tests/*

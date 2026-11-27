@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Http;
 use LIVCK\Cloud\Laravel\Tests\TestCase;
 
@@ -161,4 +162,9 @@ function probesPayload(): array
             ['code' => 'hel', 'name' => 'Helsinki', 'location' => 'Finland', 'country_code' => 'FI'],
         ],
     ];
+}
+
+function schedule(): Schedule
+{
+    return app(Schedule::class);
 }

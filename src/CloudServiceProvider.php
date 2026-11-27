@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LIVCK\Cloud\Laravel;
 
+use Illuminate\Console\Scheduling\Event;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Contracts\Foundation\Application;
@@ -12,6 +13,8 @@ use Illuminate\Support\ServiceProvider;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Laravel\Console\AboutSection;
 use LIVCK\Cloud\Laravel\Console\CheckCommand;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMacro;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
 use LogicException;
 
 /**
@@ -32,10 +35,15 @@ class CloudServiceProvider extends ServiceProvider
         // Not shared: the manager keeps the clients. Resolving anew lets an injected client follow
         // LivckCloud::fake() and, with `locale: 'app'`, the locale of the moment.
         $this->app->bind(CloudClientInterface::class, static fn(Application $app): CloudClientInterface => $app->make(CloudManager::class)->connection());
+
+        // Heartbeats. Like the manager, each reads the application of the moment.
+        $this->app->singleton(HeartbeatMonitor::class, static fn(): HeartbeatMonitor => new HeartbeatMonitor(self::currentApplication(...)));
     }
 
     public function boot(): void
     {
+        $this->registerHeartbeatMacro();
+
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__ . '/../config/livck-cloud.php' => $this->app->configPath('livck-cloud.php'),
@@ -47,6 +55,21 @@ class CloudServiceProvider extends ServiceProvider
                 AboutCommand::add('LIVCK Cloud', static fn(): array => (new AboutSection(self::currentApplication()->make(Config::class)))());
             }
         }
+
+        $this->app->make(HeartbeatMonitor::class)->boot();
+    }
+
+    /**
+     * `->heartbeat()` on every scheduled event: `Schedule::command('export:nightly')->daily()->heartbeat()`.
+     * The macro is bound to the event it is called on; it only marks the event.
+     */
+    private function registerHeartbeatMacro(): void
+    {
+        HeartbeatMacro::register(function (?string $key = null, ?int $grace = null, ?int $maxDuration = null, ?int $every = null, ?int $tolerance = null): Event {
+            HeartbeatMacro::mark($this, $key, $grace, $maxDuration, $every, $tolerance);
+
+            return $this;
+        });
     }
 
     private static function currentApplication(): Application
