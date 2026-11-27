@@ -213,9 +213,25 @@ function schedule(): Schedule
     return app(Schedule::class);
 }
 
-/** `schedule:run` as the artisan binary runs it: Artisan::call() skips the CommandStarting event. */
+/**
+ * `schedule:run` as the artisan binary runs it: Artisan::call() skips the CommandStarting event.
+ *
+ * A scheduled command runs as `php artisan <name>` in a process of its own, in Testbench's
+ * skeleton application, which has none of the commands a test names and may not even start.
+ * Its exit code decides the ping after `start`, so a test that runs the schedule gives each
+ * task an end it controls: a shell command (`exec('true')`, `exec('exit 3')`) or a closure,
+ * with a key of its own.
+ */
 function runSchedule(): int
 {
+    $artisan = Illuminate\Console\Application::formatCommandString('');
+
+    foreach (schedule()->events() as $event) {
+        if (is_string($event->command) && str_starts_with($event->command, $artisan)) {
+            throw new LogicException('runSchedule() would start [' . $event->command . '] in a process the test does not control. Schedule exec() or call() with a key instead.');
+        }
+    }
+
     Event::dispatch(new CommandStarting('schedule:run', new ArrayInput([]), new NullOutput()));
 
     return Artisan::call('schedule:run');

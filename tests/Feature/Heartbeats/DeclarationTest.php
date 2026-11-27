@@ -62,7 +62,7 @@ describe('who declares what', function (): void {
     it('never calls the API for a key with a URL in the configuration', function (): void {
         $declarations = declarationsVia();
         $pings = heartbeatsOn(['export:nightly' => 'https://ping.livck.test/hb_configured']);
-        schedule()->command('export:nightly')->everyMinute()->heartbeat();
+        schedule()->exec('true')->everyMinute()->heartbeat('export:nightly');
 
         expect(runSchedule())->toBe(0)
             ->and($declarations->recorded())->toBe([])
@@ -72,7 +72,7 @@ describe('who declares what', function (): void {
     it('declares a key without a URL and pings it at the URL LIVCK returns, in the same run', function (): void {
         $declarations = declarationsVia([declared(['export:nightly' => EXPORT_URL])]);
         $pings = heartbeatsOn();
-        schedule()->command('export:nightly')->everyMinute()->timezone('Europe/Berlin')->heartbeat(grace: 300, maxDuration: 3600, tolerance: 2);
+        schedule()->exec('true')->everyMinute()->timezone('Europe/Berlin')->heartbeat('export:nightly', grace: 300, maxDuration: 3600, tolerance: 2);
 
         runSchedule();
 
@@ -124,8 +124,8 @@ describe('who declares what', function (): void {
         useConnection('default', ['token' => null]);
         heartbeatsOn();
         $logged = loggedMessages();
-        schedule()->command('export:nightly')->everyMinute()->heartbeat();
-        schedule()->command('report:send')->hourly()->heartbeat();
+        schedule()->exec('true')->everyMinute()->heartbeat('export:nightly');
+        schedule()->exec('true')->hourly()->heartbeat('report:send');
 
         runSchedule();
         runSchedule();
@@ -259,7 +259,7 @@ describe('failures', function (): void {
         $pings = heartbeatsOn();
         app(CachedPingUrls::class)->put('export:nightly', 'https://ping.livck.test/hb_KnownBeforeTheFailure');
         $log = loggedMessages();
-        $event = schedule()->command('export:nightly')->everyMinute()->heartbeat();
+        $event = schedule()->exec('true')->everyMinute()->heartbeat('export:nightly');
 
         expect(runSchedule())->toBe(0)
             ->and($declarations->recorded())->toHaveCount(1)
@@ -303,7 +303,7 @@ describe('failures', function (): void {
     it('swallows an answer it cannot read, and tries again a minute later', function (): void {
         $declarations = declarationsVia([MockResponse::json(['data' => ['heartbeats' => 'nope']]), declared(['export:nightly' => EXPORT_URL])]);
         heartbeatsOn();
-        schedule()->command('export:nightly')->everyMinute()->heartbeat();
+        schedule()->exec('true')->everyMinute()->heartbeat('export:nightly');
 
         expect(runSchedule())->toBe(0);
 
@@ -329,7 +329,7 @@ describe('ping URLs LIVCK no longer knows', function (): void {
             MockResponse::json(['ok' => true]),         // run 5: start at the third URL
             MockResponse::json(['ok' => true]),
         ]);
-        schedule()->command('export:nightly')->everyMinute()->heartbeat();
+        schedule()->exec('true')->everyMinute()->heartbeat('export:nightly');
 
         runSchedule();
         expect(app(CachedPingUrls::class)->hasStale())->toBeTrue();

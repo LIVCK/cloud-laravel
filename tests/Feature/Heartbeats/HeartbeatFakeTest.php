@@ -77,7 +77,7 @@ it('needs a fake to assert against', function (): void {
 describe('declarations', function (): void {
     it('answers the scheduler\'s declaration, so that the tasks are pinged with the URL it returned', function (): void {
         $fake = LivckCloud::fake();
-        schedule()->command('export:nightly')->everyMinute()->heartbeat(maxDuration: 900);
+        schedule()->exec('true')->everyMinute()->heartbeat('export:nightly', maxDuration: 900);
 
         runSchedule();
 
@@ -152,7 +152,7 @@ describe('declarations', function (): void {
     it('records nothing when every heartbeat has a URL in the configuration', function (): void {
         config()->set('livck-cloud.heartbeats.urls', ['export:nightly' => 'https://ping.livck.test/hb_export']);
         $fake = LivckCloud::fake();
-        schedule()->command('export:nightly')->everyMinute()->heartbeat();
+        schedule()->exec('true')->everyMinute()->heartbeat('export:nightly');
 
         runSchedule();
 

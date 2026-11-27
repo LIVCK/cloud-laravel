@@ -356,7 +356,7 @@ it('pings the export heartbeat', function () {
 
     $this->artisan('schedule:run');
 
-    $fake->assertPinged('export:nightly', 'start', 'success');
+    $fake->assertPinged('export:nightly');
     $fake->assertNotPinged('report:build');
 });
 ```
@@ -364,6 +364,13 @@ it('pings the export heartbeat', function () {
 `assertPinged()` without signals checks for any ping; with signals, for exactly these in this
 order, an exit code as a string (`'3'`). `assertNothingPinged()` completes the set, and
 `pings('export:nightly')` lists what a key got, figures included (`metrics()`).
+
+`schedule:run` starts a scheduled command the way it does in production: as
+`php artisan export:nightly` in a process of its own. That process is not part of the test. It
+runs the command for real, without the test's fakes, and against a database of its own (an
+in-memory SQLite database is empty there). The ping after `start` is its exit code, so expect
+`success` only from a task that runs inside the test, a closure (`call`) or a job the scheduler
+runs itself, and test what a command does by running it with `$this->artisan()`.
 
 The fake answers declarations as LIVCK would, without a token: every key exists, with a ping URL
 of its own, and the pings that follow use it. A key an earlier declaration of the same test

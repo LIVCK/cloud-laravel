@@ -43,7 +43,10 @@ use WeakMap;
  *
  *     $fake = LivckCloud::fake();
  *     $this->artisan('schedule:run');
- *     $fake->assertPinged('export:nightly', 'start', 'success');
+ *     $fake->assertPinged('export:nightly');
+ *
+ * A scheduled command runs in a process of its own (`php artisan export:nightly`), outside the
+ * test and its fakes; the ping after `start` is that process's exit code.
  *
  * Declarations of heartbeats (the scheduler's and `livck-cloud:heartbeats:sync`) are answered
  * by the fake as LIVCK would, without a token and without a queued response: every key exists,
@@ -52,7 +55,7 @@ use WeakMap;
  * The pings that follow are recorded with the URL from the cache:
  *
  *     $fake = LivckCloud::fake();
- *     $this->artisan('schedule:run');
+ *     $this->artisan('livck-cloud:heartbeats:sync');
  *     $fake->assertDeclared('export:nightly', 'queue:default');
  *
  * A failed assertion throws the SDK's ExpectationFailedException, which every test runner
