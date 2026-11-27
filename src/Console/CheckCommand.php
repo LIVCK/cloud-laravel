@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace LIVCK\Cloud\Laravel\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Config\Repository as Config;
 use LIVCK\Cloud\CloudClientInterface;
 use LIVCK\Cloud\Data\Me;
 use LIVCK\Cloud\Data\MeService;
@@ -16,13 +17,20 @@ use LIVCK\Cloud\Exceptions\PermissionDeniedException;
 use LIVCK\Cloud\Exceptions\TransportException;
 use LIVCK\Cloud\Laravel\CloudManager;
 use LIVCK\Cloud\Laravel\Exceptions\ConfigurationException;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatConfig;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatDeclarer;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
 use Symfony\Component\Console\Attribute\AsCommand;
+use Throwable;
 
 /**
  * `php artisan livck-cloud:check [connection]`: calls `GET /v1/me` with the connection's
  * token and shows what the API knows about it, then `GET /v1/probes` to prove API access:
  * `/v1/me` answers any token, even one of an organization whose plan has no API access.
  * A token without `services.view` cannot ask the second question; the check says so.
+ *
+ * When the scheduler would declare heartbeats through this connection, the check also says
+ * whether the token has `heartbeats.declare`, and fails without it.
  *
  * Exits with 0 when the connection works, 1 when the API refuses the token or cannot be
  * reached, and 2 when the configuration is incomplete (unknown connection, missing token).
@@ -32,6 +40,9 @@ final class CheckCommand extends Command
 {
     /** The ability `GET /v1/probes` needs, the call that proves API access. */
     private const string PROBE_ABILITY = 'services.view';
+
+    /** The ability declaring heartbeats needs. */
+    private const string DECLARE_ABILITY = 'heartbeats.declare';
 
     /** @var string */
     protected $signature = 'livck-cloud:check
@@ -60,9 +71,25 @@ final class CheckCommand extends Command
         }
 
         $this->report($name, $client, $me);
+        [$declaring, $heartbeatsOn] = $this->heartbeatsToDeclare($name);
+        $mayDeclare = $declaring === 0 || $me->can(self::DECLARE_ABILITY);
+
+        if ($declaring > 0) {
+            $this->components->twoColumnDetail('Heartbeats', sprintf(
+                '%d to declare%s, %s',
+                $declaring,
+                $heartbeatsOn ? '' : sprintf(' (heartbeats are off in [%s], so its scheduler declares none)', $this->laravel->environment()),
+                $mayDeclare ? 'the token has ' . self::DECLARE_ABILITY : 'the token lacks ' . self::DECLARE_ABILITY,
+            ));
+        }
 
         if (! $me->can(self::PROBE_ABILITY)) {
             $this->components->twoColumnDetail('API access', sprintf('not checked, the token lacks %s', self::PROBE_ABILITY));
+
+            if (! $mayDeclare) {
+                return $this->cannotDeclare($name, $declaring);
+            }
+
             $this->components->warn(sprintf('The token of the connection [%s] is valid. Checking API access needs a token with %s.', $name, self::PROBE_ABILITY));
 
             return self::SUCCESS;
@@ -75,9 +102,54 @@ final class CheckCommand extends Command
         }
 
         $this->components->twoColumnDetail('API access', sprintf('yes, %d monitoring locations', count($probes)));
+
+        if (! $mayDeclare) {
+            return $this->cannotDeclare($name, $declaring);
+        }
+
         $this->components->info(sprintf('The connection [%s] works.', $name));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * How many heartbeats the scheduler would declare through this connection, 0 for another
+     * connection than the heartbeats' and when the list cannot be read; and whether heartbeats
+     * are on in this environment, where the scheduler declares only then.
+     *
+     * @return array{0: int, 1: bool}
+     */
+    private function heartbeatsToDeclare(string $name): array
+    {
+        try {
+            if ((new HeartbeatConfig($this->laravel->make(Config::class)))->connection() !== $name) {
+                return [0, false];
+            }
+
+            $monitor = $this->laravel->make(HeartbeatMonitor::class);
+            $list = $monitor->list();
+
+            return [
+                $this->laravel->make(HeartbeatDeclarer::class)->declarable($list)->count(),
+                $monitor->isActive() || $monitor->allowsEnvironment(),
+            ];
+        } catch (Throwable) {
+            return [0, false];
+        }
+    }
+
+    private function cannotDeclare(string $name, int $count): int
+    {
+        $this->components->error(sprintf(
+            'The token of the connection [%s] lacks %s, so the scheduler cannot declare %d %s. Create a token with %s by a member who sees the whole organization, or put the ping URLs under livck-cloud.heartbeats.urls.',
+            $name,
+            self::DECLARE_ABILITY,
+            $count,
+            $count === 1 ? 'heartbeat' : 'heartbeats',
+            self::DECLARE_ABILITY,
+        ));
+
+        return self::FAILURE;
     }
 
     private function report(string $name, CloudClientInterface $client, Me $me): void
