@@ -14,8 +14,10 @@ use LIVCK\Cloud\Data\Probe;
 use LIVCK\Cloud\Http\Request;
 use LIVCK\Cloud\Http\Response;
 use LIVCK\Cloud\Laravel\CloudManager;
+use LIVCK\Cloud\Laravel\Heartbeats\NamedHeartbeat;
 use LIVCK\Cloud\Laravel\Testing\CloudFake;
 use LIVCK\Cloud\Resources\EnrollmentKeysInterface;
+use LIVCK\Cloud\Resources\HeartbeatsInterface;
 use LIVCK\Cloud\Resources\IncidentsInterface;
 use LIVCK\Cloud\Resources\MaintenancesInterface;
 use LIVCK\Cloud\Resources\ServicesInterface;
@@ -49,15 +51,23 @@ use SensitiveParameter;
  * @method static IncidentsInterface incidents()
  * @method static MaintenancesInterface maintenances()
  * @method static EnrollmentKeysInterface enrollmentKeys()
+ * @method static HeartbeatsInterface heartbeats()
  * @method static Me me()
  * @method static list<Probe> probes()
  * @method static CheckTypeCatalog checkTypes()
+ * @method static NamedHeartbeat heartbeat(string $key)
  * @method static Response request(string $method, string $path, array<string, mixed> $query = [], array<string, mixed>|null $json = null, array<string, string> $headers = [])
  * @method static Response send(Request $request)
  * @method static CloudFake assertSent(Closure(RecordedRequest, string): bool $matcher, string $message = '')
  * @method static CloudFake assertNotSent(Closure(RecordedRequest, string): bool $matcher, string $message = '')
  * @method static CloudFake assertSentCount(int $count, string $message = '')
  * @method static CloudFake assertNothingSent(string $message = '')
+ * @method static CloudFake assertPinged(string $key, string ...$signals)
+ * @method static CloudFake assertNotPinged(string $key)
+ * @method static CloudFake assertNothingPinged()
+ * @method static CloudFake assertDeclared(string ...$keys)
+ * @method static CloudFake assertNotDeclared(string $key)
+ * @method static CloudFake assertNothingDeclared()
  *
  * @see CloudManager
  */

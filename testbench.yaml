@@ -1,0 +1,4 @@
+# Lets static analysis boot the package the way an application does, so that it sees the
+# ->heartbeat() macro of scheduled events.
+providers:
+  - LIVCK\Cloud\Laravel\CloudServiceProvider

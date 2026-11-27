@@ -23,6 +23,9 @@ use LIVCK\Cloud\Http\Request;
 use LIVCK\Cloud\Http\Response;
 use LIVCK\Cloud\Laravel\Exceptions\ConfigurationException;
 use LIVCK\Cloud\Laravel\Exceptions\MissingTokenException;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatPinger;
+use LIVCK\Cloud\Laravel\Heartbeats\NamedHeartbeat;
 use LIVCK\Cloud\Laravel\Http\LaravelHttpClient;
 use LIVCK\Cloud\Laravel\Support\ConfigValue;
 use LIVCK\Cloud\Laravel\Support\ConnectionConfig;
@@ -42,6 +45,7 @@ use Psr\Http\Message\RequestInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use SensitiveParameter;
+use Throwable;
 
 /**
  * The connections of config/livck-cloud.php, one SDK client each.
@@ -196,15 +200,123 @@ class CloudManager
     }
 
     /**
-     * Swap every connection for a fake answering from one queue; see {@see CloudFake}.
+     * Swap every connection for a fake answering from one queue; see {@see CloudFake}. Heartbeat
+     * pings and declarations are recorded by the fake instead of sent, and heartbeats are on
+     * whatever `heartbeats.environments` says.
      *
      * @param iterable<MockResponse|Closure(RequestInterface): MockResponse> $responses answered in order
      */
     public function fake(iterable $responses = []): CloudFake
     {
         $this->connections = [];
+        $this->fake = new CloudFake(new FakeHttpClient($responses));
+        $this->app()->make(HeartbeatMonitor::class)->activate();
 
-        return $this->fake = new CloudFake(new FakeHttpClient($responses));
+        return $this->fake;
+    }
+
+    /**
+     * The fake while one is active.
+     *
+     * @internal
+     */
+    public function currentFake(): ?CloudFake
+    {
+        return $this->fake;
+    }
+
+    /**
+     * A heartbeat to ping from your own code, by its key; the ping URL comes from
+     * `heartbeats.urls`. Never throws.
+     *
+     *     LivckCloud::heartbeat('backup')->exitCode($code);
+     */
+    public function heartbeat(string $key): NamedHeartbeat
+    {
+        $app = $this->app();
+
+        return new NamedHeartbeat(trim($key), $app->make(HeartbeatPinger::class), $app->make(HeartbeatMonitor::class));
+    }
+
+    /**
+     * A client of the default connection for declaring heartbeats, built for this call and
+     * never kept. With a timeout, the request may take that long at most and is not retried:
+     * the scheduler waits for it. Never a fake's client; the fake answers declarations itself.
+     *
+     * @internal
+     *
+     * @throws ConfigurationException for an unknown connection or a configuration the SDK refuses
+     * @throws MissingTokenException when the connection has no token
+     */
+    public function heartbeatClient(?float $timeout, ?ClientInterface $httpClient = null): CloudClientInterface
+    {
+        $name = $this->getDefaultConnection();
+        $config = ConnectionConfig::fromArray($name, $this->settings($name));
+        $options = $config->options($this->userAgentSuffix($config->userAgentSuffix), $this->logger());
+
+        if ($timeout !== null) {
+            $options = $options->withTimeout($timeout, min($timeout, $options->connectTimeout))->withMaxRetries(0);
+        }
+
+        $token = $config->token ?? throw MissingTokenException::forConnection($name);
+
+        if ($httpClient instanceof ClientInterface) {
+            return new CloudClient($token, $options, $httpClient);
+        }
+
+        return new CloudClient($token, $options, $config->transport === Transport::Laravel ? $this->laravelHttpClient($options) : null);
+    }
+
+    /**
+     * Whether the default connection has a token. Never throws.
+     *
+     * @internal
+     */
+    public function hasToken(): bool
+    {
+        try {
+            $name = $this->getDefaultConnection();
+
+            return ConnectionConfig::fromArray($name, $this->settings($name))->token instanceof BearerToken;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * The heartbeat was pinged; with signals, exactly these in this order. See {@see CloudFake::assertPinged()}.
+     */
+    public function assertPinged(string $key, string ...$signals): CloudFake
+    {
+        return $this->activeFake()->assertPinged($key, ...$signals);
+    }
+
+    public function assertNotPinged(string $key): CloudFake
+    {
+        return $this->activeFake()->assertNotPinged($key);
+    }
+
+    public function assertNothingPinged(): CloudFake
+    {
+        return $this->activeFake()->assertNothingPinged();
+    }
+
+    /**
+     * Heartbeats were declared; with keys, one declaration named each. See {@see CloudFake::assertDeclared()}.
+     */
+    public function assertDeclared(string ...$keys): CloudFake
+    {
+        return $this->activeFake()->assertDeclared(...$keys);
+    }
+
+    public function assertNotDeclared(string $key): CloudFake
+    {
+        return $this->activeFake()->assertNotDeclared($key);
+    }
+
+    public function assertNothingDeclared(): CloudFake
+    {
+        return $this->activeFake()->assertNothingDeclared();
     }
 
     /**

@@ -127,3 +127,64 @@ it('refuses an unknown connection with 2', function (): void {
     expect($exitCode)->toBe(2)
         ->and($output)->toContain('The LIVCK Cloud connection [customer-x] is not configured.');
 });
+
+describe('heartbeats', function (): void {
+    it('says that the token may declare the heartbeats the scheduler would declare', function (): void {
+        LivckCloud::fake([MockResponse::json(mePayload(['permissions' => ['services.view', 'heartbeats.declare']])), MockResponse::json(probesPayload())]);
+        schedule()->command('export:nightly')->daily()->heartbeat();
+        schedule()->command('report:send')->daily()->heartbeat();
+
+        [$exitCode, $output] = check();
+
+        expect($exitCode)->toBe(0)
+            ->and($output)->toContain('Heartbeats')->toContain('2 to declare, the token has heartbeats.declare')
+            ->toContain('The connection [default] works.');
+    });
+
+    it('says when heartbeats are off in this environment, so its scheduler declares none', function (): void {
+        LivckCloud::fake([MockResponse::json(mePayload(['permissions' => ['services.view', 'heartbeats.declare']])), MockResponse::json(probesPayload())]);
+        // The fake turns heartbeats on; a monitor of its own stands for a process where they are off.
+        app()->forgetInstance(LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor::class);
+        schedule()->command('export:nightly')->daily()->heartbeat();
+
+        [$exitCode, $output] = check();
+
+        expect($exitCode)->toBe(0)
+            ->and(preg_replace('/\s+/', ' ', $output))->toContain('1 to declare (heartbeats are off in [testing], so its scheduler declares none), the token has heartbeats.declare');
+    });
+
+    it('fails when the token lacks heartbeats.declare', function (MockResponse ...$responses): void {
+        LivckCloud::fake($responses);
+        schedule()->command('export:nightly')->daily()->heartbeat();
+
+        [$exitCode, $output] = check();
+
+        expect($exitCode)->toBe(1)
+            ->and($output)->toContain('1 to declare, the token lacks heartbeats.declare')
+            ->toContain('The token of the connection [default] lacks heartbeats.declare, so the scheduler cannot declare 1 heartbeat. Create a token with heartbeats.declare by a member who sees the whole organization, or put the ping URLs under livck-cloud.heartbeats.urls.')
+            ->and($output)->not->toContain('works.');
+    })->with([
+        'with API access proven' => [MockResponse::json(mePayload(['permissions' => ['services.view']])), MockResponse::json(probesPayload())],
+        'without services.view' => [MockResponse::json(mePayload(['permissions' => []]))],
+    ]);
+
+    it('asks nothing about heartbeats when every one has a URL in the configuration', function (): void {
+        LivckCloud::fake([MockResponse::json(mePayload()), MockResponse::json(probesPayload())]);
+        config()->set('livck-cloud.heartbeats.urls', ['export:nightly' => 'https://ping.livck.test/hb_export']);
+        schedule()->command('export:nightly')->daily()->heartbeat();
+
+        [$exitCode, $output] = check();
+
+        expect($exitCode)->toBe(0)->and($output)->not->toContain('to declare');
+    });
+
+    it('asks nothing about heartbeats for another connection than theirs', function (): void {
+        useConnection('customer-b');
+        LivckCloud::fake([MockResponse::json(mePayload()), MockResponse::json(probesPayload())]);
+        schedule()->command('export:nightly')->daily()->heartbeat();
+
+        [$exitCode, $output] = check(['connection' => 'customer-b']);
+
+        expect($exitCode)->toBe(0)->and($output)->not->toContain('to declare');
+    });
+});

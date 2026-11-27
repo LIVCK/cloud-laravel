@@ -4,6 +4,33 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Heartbeats for scheduled tasks, queued jobs and queues, on `livck/cloud-php` 1.3.
+
+### Added
+
+- `->heartbeat()` on a scheduled task: a LIVCK heartbeat is pinged when the task starts and
+  when it ends, with its exit code. A scheduled queued job is pinged by the worker that ran
+  it, and only when it really finished.
+- Queue pulse: for every queue in `heartbeats.queues` the scheduler queues a small job each
+  minute, and the worker reports how long it waited.
+- Declaring heartbeats: with an API token the package declares what it found in the code and
+  gets the ping URLs back, once per change, from the scheduler run or from
+  `livck-cloud:heartbeats:sync`. A key with a ping URL in `heartbeats.urls` never reaches the
+  API.
+- `LivckCloud::heartbeat('key')` for pings from your own code, with a schedule in
+  `heartbeats.custom`.
+- `livck-cloud:heartbeats` lists the heartbeats found in the code and what is wrong with
+  them; `livck-cloud:check` looks for the `heartbeats.declare` permission.
+- `LivckCloud::fake()` records pings and declarations: `assertPinged()`, `assertNotPinged()`,
+  `assertNothingPinged()`, `assertDeclared()`, `assertNotDeclared()` and
+  `assertNothingDeclared()`.
+
+### Changed
+
+- Requires `livck/cloud-php` ^1.3 and the `illuminate/bus` and `illuminate/queue` components.
+
 ## [1.2.0] - 2026-10-07
 
 Enrollment keys of `livck/cloud-php` 1.2 on the facade.

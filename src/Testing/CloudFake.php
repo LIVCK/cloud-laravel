@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace LIVCK\Cloud\Laravel\Testing;
 
+use ArrayObject;
 use Closure;
+use LIVCK\Cloud\Builders\HeartbeatDeclaration;
 use LIVCK\Cloud\ClientOptions;
 use LIVCK\Cloud\CloudClient;
+use LIVCK\Cloud\Data\HeartbeatDeclarationResult;
+use LIVCK\Cloud\Testing\ExpectationFailedException;
 use LIVCK\Cloud\Testing\FakeHttpClient;
 use LIVCK\Cloud\Testing\MockResponse;
 use LIVCK\Cloud\Testing\RecordedRequest;
@@ -33,6 +37,27 @@ use WeakMap;
  * no configured token is needed, every fake sends {@see TOKEN}. A token passed to
  * `build()` or `withToken()` is still checked, so a blank one throws as in production.
  *
+ * Heartbeat pings are recorded apart from the requests: nothing is sent, every ping is kept
+ * whether a ping URL is known or not, and `fake()` turns heartbeats on in every environment,
+ * so that a test sees what the scheduler and the workers would ping:
+ *
+ *     $fake = LivckCloud::fake();
+ *     $this->artisan('schedule:run');
+ *     $fake->assertPinged('export:nightly');
+ *
+ * A scheduled command runs in a process of its own (`php artisan export:nightly`), outside the
+ * test and its fakes; the ping after `start` is that process's exit code.
+ *
+ * Declarations of heartbeats (the scheduler's and `livck-cloud:heartbeats:sync`) are answered
+ * by the fake as LIVCK would, without a token and without a queued response: every key exists,
+ * a new one as `created`, one declared before as `unchanged` or `updated`, each with a ping
+ * URL of its own, and a key an earlier declaration named but this one does not as `unlisted`.
+ * The pings that follow are recorded with the URL from the cache:
+ *
+ *     $fake = LivckCloud::fake();
+ *     $this->artisan('livck-cloud:heartbeats:sync');
+ *     $fake->assertDeclared('export:nightly', 'queue:default');
+ *
  * A failed assertion throws the SDK's ExpectationFailedException, which every test runner
  * reports as a failure. A passed one counts as an assertion with PHPUnit (and Pest), as
  * with Laravel's own fakes, so a test resting on it alone is not flagged as risky.
@@ -52,9 +77,17 @@ final readonly class CloudFake
     /** @var WeakMap<RecordedRequest, string> */
     private WeakMap $senders;
 
+    /** @var ArrayObject<int, RecordedPing> */
+    private ArrayObject $pings;
+
+    /** @var ArrayObject<int, RecordedDeclaration> */
+    private ArrayObject $declarations;
+
     public function __construct(private FakeHttpClient $http)
     {
         $this->senders = new WeakMap();
+        $this->pings = new ArrayObject();
+        $this->declarations = new ArrayObject();
     }
 
     /**
@@ -190,6 +223,211 @@ final readonly class CloudFake
     public function http(): FakeHttpClient
     {
         return $this->http;
+    }
+
+    /**
+     * Record a heartbeat ping instead of sending it.
+     *
+     * @internal
+     */
+    public function recordPing(RecordedPing $ping): void
+    {
+        $this->pings->append($ping);
+    }
+
+    /**
+     * Every heartbeat ping, in order; only one key's when a key is given.
+     *
+     * @return list<RecordedPing>
+     */
+    public function pings(?string $key = null): array
+    {
+        $pings = array_values($this->pings->getArrayCopy());
+
+        return $key === null ? $pings : array_values(array_filter($pings, static fn(RecordedPing $ping): bool => $ping->key === $key));
+    }
+
+    /**
+     * The heartbeat was pinged. With signals, it got exactly these, in this order:
+     * `assertPinged('export:nightly', 'start', 'success')`; an exit code as a string (`'3'`).
+     */
+    public function assertPinged(string $key, string ...$signals): self
+    {
+        $got = array_map(static fn(RecordedPing $ping): string => $ping->signal, $this->pings($key));
+
+        if ($got === []) {
+            throw new ExpectationFailedException(sprintf('The heartbeat [%s] was not pinged. Pinged: %s', $key, $this->describePings()));
+        }
+
+        if ($signals !== [] && $got !== $signals) {
+            throw new ExpectationFailedException(sprintf('The heartbeat [%s] got [%s], expected [%s].', $key, implode(', ', $got), implode(', ', $signals)));
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    public function assertNotPinged(string $key): self
+    {
+        $got = array_map(static fn(RecordedPing $ping): string => $ping->signal, $this->pings($key));
+
+        if ($got !== []) {
+            throw new ExpectationFailedException(sprintf('The heartbeat [%s] was pinged: [%s].', $key, implode(', ', $got)));
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    public function assertNothingPinged(): self
+    {
+        if ($this->pings->count() > 0) {
+            throw new ExpectationFailedException(sprintf('Expected no heartbeat ping. Pinged: %s', $this->describePings()));
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    /**
+     * Answer a declaration of heartbeats as LIVCK would, and record it.
+     *
+     * @internal
+     */
+    public function declare(HeartbeatDeclaration $declaration): HeartbeatDeclarationResult
+    {
+        $body = $declaration->toArray();
+        $earlier = [];
+
+        foreach ($this->declarations() as $recorded) {
+            if ($recorded->app === $body['app'] && $recorded->environment === $body['environment']) {
+                foreach ($recorded->heartbeats as $entry) {
+                    $earlier[is_string($entry['key'] ?? null) ? $entry['key'] : ''] = $entry;
+                }
+            }
+        }
+
+        $heartbeats = [];
+        $counts = ['created' => 0, 'updated' => 0, 'unchanged' => 0];
+
+        foreach ($body['heartbeats'] as $entry) {
+            $key = is_string($entry['key'] ?? null) ? $entry['key'] : '';
+            $result = match (true) {
+                ! isset($earlier[$key]) => 'created',
+                $earlier[$key] === $entry => 'unchanged',
+                default => 'updated',
+            };
+            $counts[$result]++;
+            $schedule = is_array($entry['schedule'] ?? null) ? $entry['schedule'] : [];
+            $id = hash('sha256', implode("\n", [$body['app'], $body['environment'], $key]));
+
+            $heartbeats[] = [
+                'service_id' => 'svc' . substr($id, 0, 18),
+                'key' => $key,
+                'name' => $key,
+                'kind' => $entry['kind'] ?? 'custom',
+                'schedule' => ['period_seconds' => null, 'expression' => null, 'timezone' => 'UTC', ...$schedule],
+                'grace_seconds' => $entry['grace_seconds'] ?? 60,
+                'schedule_tolerance' => $entry['schedule_tolerance'] ?? 1,
+                'max_duration_seconds' => $entry['max_duration_seconds'] ?? null,
+                'ping_url' => 'https://ping.livck.test/hb_' . substr($id, 18, 32),
+                'status' => 'unknown',
+                'paused' => false,
+                'result' => $result,
+            ];
+            unset($earlier[$key]);
+        }
+
+        $unlisted = [];
+
+        foreach (array_keys($earlier) as $key) {
+            $unlisted[] = ['key' => (string) $key, 'service_id' => 'svc' . substr(hash('sha256', implode("\n", [$body['app'], $body['environment'], (string) $key])), 0, 18)];
+        }
+
+        $this->declarations->append(new RecordedDeclaration($body['app'], $body['environment'], $body['heartbeats']));
+
+        return HeartbeatDeclarationResult::fromArray([
+            'heartbeats' => $heartbeats,
+            'not_created' => ['keys' => [], 'reason' => null, 'missing' => null, 'retry_after' => null],
+            'unlisted' => $unlisted,
+            'skipped_tags' => [],
+            'counts' => $counts,
+        ]);
+    }
+
+    /**
+     * Every declaration of heartbeats, in order.
+     *
+     * @return list<RecordedDeclaration>
+     */
+    public function declarations(): array
+    {
+        return array_values($this->declarations->getArrayCopy());
+    }
+
+    /**
+     * Heartbeats were declared. With keys, one declaration named each of them (and maybe
+     * more): `assertDeclared('export:nightly', 'queue:default')`.
+     */
+    public function assertDeclared(string ...$keys): self
+    {
+        $declarations = $this->declarations();
+
+        if ($declarations === []) {
+            throw new ExpectationFailedException('No heartbeats were declared.');
+        }
+
+        foreach ($declarations as $declaration) {
+            if (array_diff($keys, $declaration->keys()) === []) {
+                $this->passed();
+
+                return $this;
+            }
+        }
+
+        throw new ExpectationFailedException(sprintf('No declaration named [%s]. Declared: %s', implode(', ', $keys), $this->describeDeclarations()));
+    }
+
+    /** No declaration named the key. */
+    public function assertNotDeclared(string $key): self
+    {
+        foreach ($this->declarations() as $declaration) {
+            if (in_array($key, $declaration->keys(), true)) {
+                throw new ExpectationFailedException(sprintf('The heartbeat [%s] was declared. Declared: %s', $key, $this->describeDeclarations()));
+            }
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    public function assertNothingDeclared(): self
+    {
+        if ($this->declarations->count() > 0) {
+            throw new ExpectationFailedException(sprintf('Expected no declaration of heartbeats. Declared: %s', $this->describeDeclarations()));
+        }
+
+        $this->passed();
+
+        return $this;
+    }
+
+    private function describeDeclarations(): string
+    {
+        $declarations = array_map(static fn(RecordedDeclaration $declaration): string => '[' . implode(', ', $declaration->keys()) . ']', $this->declarations());
+
+        return $declarations === [] ? 'nothing' : implode(', ', $declarations);
+    }
+
+    private function describePings(): string
+    {
+        $pings = array_map(static fn(RecordedPing $ping): string => $ping->key . ' ' . $ping->signal, $this->pings());
+
+        return $pings === [] ? 'nothing' : implode(', ', $pings);
     }
 
     /**

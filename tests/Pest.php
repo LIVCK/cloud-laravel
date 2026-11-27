@@ -2,8 +2,24 @@
 
 declare(strict_types=1);
 
+use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
+use LIVCK\Cloud\Laravel\Heartbeats\DeclarationClientFactory;
+use LIVCK\Cloud\Laravel\Heartbeats\HeartbeatMonitor;
+use LIVCK\Cloud\Laravel\Heartbeats\PingClientFactory;
 use LIVCK\Cloud\Laravel\Tests\TestCase;
+use LIVCK\Cloud\Testing\FakeHttpClient;
+use LIVCK\Cloud\Testing\MockResponse;
+use LIVCK\Cloud\Testing\RecordedRequest;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\NullOutput;
 
 pest()->extend(TestCase::class)->in('Feature', 'Integration');
 
@@ -161,4 +177,191 @@ function probesPayload(): array
             ['code' => 'hel', 'name' => 'Helsinki', 'location' => 'Finland', 'country_code' => 'FI'],
         ],
     ];
+}
+
+/**
+ * Turn heartbeats on the way a scheduler or worker in an allowed environment does, with pings
+ * sent to a fake HTTP client that answers 200 unless told otherwise.
+ *
+ * @param array<string, string> $urls ping URLs by key, written into heartbeats.urls
+ * @param list<MockResponse>|null $responses answered in order; 200 for up to 50 pings when null
+ */
+function heartbeatsOn(array $urls = [], ?array $responses = null): FakeHttpClient
+{
+    config()->set('livck-cloud.heartbeats.environments', ['testing']);
+    config()->set('livck-cloud.heartbeats.urls', $urls);
+
+    $http = new FakeHttpClient($responses ?? array_fill(0, 50, MockResponse::json(['ok' => true])));
+    app()->instance(PingClientFactory::class, new PingClientFactory($http));
+    app(HeartbeatMonitor::class)->boot();
+
+    return $http;
+}
+
+/**
+ * The path of every ping the fake HTTP client received, in order.
+ *
+ * @return list<string>
+ */
+function pingedPaths(FakeHttpClient $http): array
+{
+    return array_map(static fn(RecordedRequest $request): string => $request->path(), $http->recorded());
+}
+
+function schedule(): Schedule
+{
+    return app(Schedule::class);
+}
+
+/**
+ * `schedule:run` as the artisan binary runs it: Artisan::call() skips the CommandStarting event.
+ *
+ * A scheduled command runs as `php artisan <name>` in a process of its own, in Testbench's
+ * skeleton application, which has none of the commands a test names and may not even start.
+ * Its exit code decides the ping after `start`, so a test that runs the schedule gives each
+ * task an end it controls: a shell command (`exec('true')`, `exec('exit 3')`) or a closure,
+ * with a key of its own.
+ */
+function runSchedule(): int
+{
+    $artisan = Illuminate\Console\Application::formatCommandString('');
+
+    foreach (schedule()->events() as $event) {
+        if (is_string($event->command) && str_starts_with($event->command, $artisan)) {
+            throw new LogicException('runSchedule() would start [' . $event->command . '] in a process the test does not control. Schedule exec() or call() with a key instead.');
+        }
+    }
+
+    Event::dispatch(new CommandStarting('schedule:run', new ArrayInput([]), new NullOutput()));
+
+    return Artisan::call('schedule:run');
+}
+
+/** The database queue on the in-memory database, with no failed-job store. */
+function useDatabaseQueue(): void
+{
+    config()->set('queue.default', 'database');
+    config()->set('queue.connections.database', ['driver' => 'database', 'table' => 'jobs', 'queue' => 'default', 'retry_after' => 90, 'after_commit' => false]);
+    config()->set('queue.failed.driver', 'null');
+
+    Schema::create('jobs', static function (Blueprint $table): void {
+        $table->id();
+        $table->string('queue')->index();
+        $table->longText('payload');
+        $table->unsignedTinyInteger('attempts');
+        $table->unsignedInteger('reserved_at')->nullable();
+        $table->unsignedInteger('available_at');
+        $table->unsignedInteger('created_at');
+    });
+}
+
+/** One pass of a worker over a queue of the database connection. */
+function work(string $queue = 'default'): void
+{
+    Artisan::call('queue:work', ['connection' => 'database', '--once' => true, '--queue' => $queue, '--sleep' => 0, '--tries' => 0]);
+}
+
+/**
+ * The decoded payloads of the jobs waiting in the database queue.
+ *
+ * @return list<array<array-key, mixed>>
+ */
+function queuedPayloads(): array
+{
+    $payloads = [];
+
+    foreach (DB::table('jobs')->orderBy('id')->pluck('payload') as $payload) {
+        $decoded = json_decode(is_string($payload) ? $payload : '', true);
+        $payloads[] = is_array($decoded) ? $decoded : [];
+    }
+
+    return $payloads;
+}
+
+/**
+ * Collects the messages logged from here on, as level and interpolated text.
+ *
+ * @return ArrayObject<int, string>
+ */
+function loggedMessages(): ArrayObject
+{
+    /** @var ArrayObject<int, string> $messages */
+    $messages = new ArrayObject();
+
+    Event::listen(MessageLogged::class, static function (MessageLogged $event) use ($messages): void {
+        $text = $event->message;
+
+        foreach ($event->context as $key => $value) {
+            $text = str_replace('{' . $key . '}', is_scalar($value) ? (string) $value : get_debug_type($value), $text);
+        }
+
+        $messages->append($event->level . ': ' . $text);
+    });
+
+    return $messages;
+}
+
+/**
+ * Give the default connection a token and send every declaration of heartbeats to a fake HTTP
+ * client, which answers in order.
+ *
+ * @param list<MockResponse|Closure(Psr\Http\Message\RequestInterface): MockResponse> $responses
+ */
+function declarationsVia(array $responses = []): FakeHttpClient
+{
+    useConnection('default', ['token' => TEST_TOKEN]);
+
+    $http = new FakeHttpClient($responses);
+    app()->instance(DeclarationClientFactory::class, new DeclarationClientFactory($http));
+
+    return $http;
+}
+
+/**
+ * One heartbeat of an answer to `POST /v1/heartbeats/declare`.
+ *
+ * @param array<string, mixed> $overrides
+ * @return array<string, mixed>
+ */
+function declaredEntry(string $key, string $url, array $overrides = []): array
+{
+    return [
+        'service_id' => 'svc' . substr(hash('sha256', $key), 0, 18),
+        'key' => $key,
+        'name' => $key,
+        'kind' => 'schedule',
+        'schedule' => ['type' => 'simple', 'period_seconds' => 60, 'expression' => null, 'timezone' => 'UTC'],
+        'grace_seconds' => 60,
+        'schedule_tolerance' => 1,
+        'max_duration_seconds' => null,
+        'ping_url' => $url,
+        'status' => 'unknown',
+        'paused' => false,
+        'result' => 'created',
+        ...$overrides,
+    ];
+}
+
+/**
+ * The answer to `POST /v1/heartbeats/declare` in which the keys exist with these URLs.
+ *
+ * @param array<string, string> $urls ping URL by key
+ * @param array<string, mixed> $overrides top-level fields of `data` to replace
+ */
+function declared(array $urls, array $overrides = []): MockResponse
+{
+    $heartbeats = [];
+
+    foreach ($urls as $key => $url) {
+        $heartbeats[] = declaredEntry((string) $key, $url);
+    }
+
+    return MockResponse::json(['data' => [
+        'heartbeats' => $heartbeats,
+        'not_created' => ['keys' => [], 'reason' => null, 'missing' => null, 'retry_after' => null],
+        'unlisted' => [],
+        'skipped_tags' => [],
+        'counts' => ['created' => count($heartbeats), 'updated' => 0, 'unchanged' => 0],
+        ...$overrides,
+    ]]);
 }
